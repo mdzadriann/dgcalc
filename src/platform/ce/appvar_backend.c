@@ -94,11 +94,13 @@ static bool appvar_set_archived(void *user,
     int closed;
     (void)user;
 
-    handle = ti_Open(name, "r+");
+    handle = ti_Open(name, "r");
     if (handle == 0) {
         return false;
     }
-    moved = ti_SetArchiveStatus(archived, handle);
+    moved = (ti_IsArchived(handle) != 0) == archived
+                ? 1
+                : ti_SetArchiveStatus(archived, handle);
     closed = ti_Close(handle);
     return moved != 0 && closed != 0;
 }

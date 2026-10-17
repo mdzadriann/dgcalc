@@ -169,17 +169,21 @@ int main(void) {
         EditorBuffer *editor =
             &project.lines[app_state.selected_expression].draft;
         uint16_t length_before;
+        uint16_t cursor_before;
         AppAction action;
 
         if (redraw) {
-            ce_ui_draw(&app_state, &project);
+            ce_ui_draw(&app_state, &project, editing);
             redraw = false;
         }
         length_before = editor->length;
+        cursor_before = editor->cursor;
         action = ce_input_poll(editor, editing);
+        if (editor->length != length_before || editor->cursor != cursor_before) {
+            redraw = true;
+        }
         if (editor->length != length_before) {
             project.dirty = true;
-            redraw = true;
         }
         if (action != APP_ACTION_NONE) {
             handle_action(action, &editing, &running);

@@ -41,5 +41,5 @@ Projects are stored in the archived AppVar `DGCPROJ`. Saves use `DGCTMP` plus `D
 - CEdev: v15.0, eZ80 Clang 19.1.0
 - arTIfiCE Shell target: 2.1
 - Calculator OS version: pending physical-calculator check
-- Program size: 19,524-byte private `.8xp` (integrated Milestone 1 build)
+- Program size: 21,491-byte private `.8xp` (integrated Milestone 1 build)
 - Physical checks: pending transfer to the user’s calculator

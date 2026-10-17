@@ -64,6 +64,9 @@ static void test_project_codec_round_trips_committed_and_draft_sources(void) {
     ASSERT_EQ_INT(2, destination_project.count);
     ASSERT_STR_EQ("a=2", destination_project.lines[0].committed_source);
     ASSERT_STR_EQ("a=", destination_project.lines[0].draft.text);
+    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[0].status);
+    ASSERT_EQ_INT(PARSE_ERR_EXPECTED,
+                  destination_project.lines[0].parse_error);
     ASSERT_STR_EQ("b=a+3", destination_project.lines[1].committed_source);
     ASSERT_FALSE(destination_project.dirty);
     ASSERT_FLOAT_EQ(5.0f,
@@ -150,6 +153,75 @@ static void test_project_codec_rejects_corrupt_inputs_transactionally(void) {
     assert_rejected_without_mutation(damaged, length, CODEC_ERR_LENGTH);
 }
 
+static void test_project_codec_rejects_duplicate_saved_definitions(void) {
+    AppState source_state;
+    CodecError error;
+    size_t length;
+
+    app_state_init(&source_state);
+    project_init(&source_project);
+    set_and_commit(&source_project, 0, "a=2");
+    source_project.lines[1] = source_project.lines[0];
+    source_project.count = 2;
+    length = project_encode(&source_state,
+                            &source_project,
+                            encoded,
+                            sizeof(encoded),
+                            &error);
+    ASSERT_TRUE(length > 0);
+    assert_rejected_without_mutation(encoded, length, CODEC_ERR_CONTENT);
+}
+
+static void test_project_codec_restores_duplicate_draft_errors(void) {
+    AppState source_state;
+    AppState destination_state;
+    CodecError error;
+    size_t length;
+
+    app_state_init(&source_state);
+    project_init(&source_project);
+    set_and_commit(&source_project, 0, "g=3");
+    set_and_commit(&source_project, 1, "a=2");
+    set_and_commit(&source_project, 2, "h=4");
+    set_and_commit(&source_project, 3, "q(x)=x+1");
+    set_and_commit(&source_project, 4, "f(x)=x^2");
+    ASSERT_TRUE(project_set_draft(&source_project, 0, "a=9"));
+    ASSERT_FALSE(project_commit_line(&source_project, 0).ok);
+    ASSERT_TRUE(project_set_draft(&source_project, 2, "a=8"));
+    ASSERT_FALSE(project_commit_line(&source_project, 2).ok);
+    ASSERT_TRUE(project_set_draft(&source_project, 3, "f(t)=t+9"));
+    ASSERT_FALSE(project_commit_line(&source_project, 3).ok);
+    length = project_encode(&source_state,
+                            &source_project,
+                            encoded,
+                            sizeof(encoded),
+                            &error);
+    ASSERT_TRUE(length > 0);
+
+    project_init(&destination_project);
+    ASSERT_TRUE(project_decode(&destination_state,
+                               &destination_project,
+                               encoded,
+                               length,
+                               &error));
+    ASSERT_STR_EQ("g=3", destination_project.lines[0].committed_source);
+    ASSERT_STR_EQ("a=9", destination_project.lines[0].draft.text);
+    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[0].status);
+    ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
+                  destination_project.lines[0].validation_error);
+    ASSERT_STR_EQ("h=4", destination_project.lines[2].committed_source);
+    ASSERT_STR_EQ("a=8", destination_project.lines[2].draft.text);
+    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[2].status);
+    ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
+                  destination_project.lines[2].validation_error);
+    ASSERT_STR_EQ("q(x)=x+1",
+                  destination_project.lines[3].committed_source);
+    ASSERT_STR_EQ("f(t)=t+9", destination_project.lines[3].draft.text);
+    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[3].status);
+    ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
+                  destination_project.lines[3].validation_error);
+}
+
 static void test_decoder_fuzz_keeps_destinations_transactional(void) {
     AppState destination_state;
     AppState state_before;
@@ -193,5 +265,7 @@ void run_project_codec_tests(void) {
     test_project_codec_round_trips_committed_and_draft_sources();
     test_project_codec_round_trips_an_empty_project();
     test_project_codec_rejects_corrupt_inputs_transactionally();
+    test_project_codec_rejects_duplicate_saved_definitions();
+    test_project_codec_restores_duplicate_draft_errors();
     test_decoder_fuzz_keeps_destinations_transactional();
 }

@@ -20,6 +20,29 @@ static uint8_t definition_name(const ExpressionLine *line) {
     return line->arena.nodes[root->left].name;
 }
 
+static bool has_duplicate_definition(const Project *project,
+                                     uint8_t edited_index,
+                                     const AstArena *arena,
+                                     AstId root,
+                                     ExprRole role) {
+    uint8_t name;
+    uint8_t index;
+
+    if (role != EXPR_ROLE_DEFINITION &&
+        role != EXPR_ROLE_FUNCTION_DEFINITION) {
+        return false;
+    }
+    name = arena->nodes[arena->nodes[root].left].name;
+    for (index = 0; index < project->count; index++) {
+        const ExpressionLine *line = &project->lines[index];
+        if (index != edited_index && line->has_committed &&
+            line->role == role && definition_name(line) == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int8_t find_definition(const Project *project,
                               uint8_t name,
                               bool function_call) {
@@ -165,32 +188,71 @@ static CommitResult failed_commit(ParseErrorCode parse_error,
     return result;
 }
 
-CommitResult project_commit_line(Project *project, uint8_t index) {
+static CommitResult validate_draft(Project *project,
+                                   uint8_t index,
+                                   ParseResult *parsed,
+                                   ValidationResult *validated) {
     ExpressionLine *line;
-    ParseResult parsed;
-    ValidationResult validated;
 
     if (index >= project->count) {
         return failed_commit(PARSE_ERR_EXPECTED, VALIDATION_OK, 0);
     }
     line = &project->lines[index];
-    parsed = parser_parse(line->draft.text, &parse_scratch);
-    if (!parsed.ok) {
+    *parsed = parser_parse(line->draft.text, &parse_scratch);
+    if (!parsed->ok) {
         line->status = EXPRESSION_INVALID;
-        line->parse_error = parsed.code;
+        line->parse_error = parsed->code;
         line->validation_error = VALIDATION_OK;
-        line->error_offset = parsed.offset;
-        return failed_commit(parsed.code, VALIDATION_OK, parsed.offset);
+        line->error_offset = parsed->offset;
+        return failed_commit(parsed->code, VALIDATION_OK, parsed->offset);
     }
 
-    validated = expression_validate(&parse_scratch, parsed.root);
-    if (!validated.ok) {
+    *validated = expression_validate(&parse_scratch, parsed->root);
+    if (!validated->ok) {
         line->status = EXPRESSION_INVALID;
         line->parse_error = PARSE_OK;
-        line->validation_error = validated.error;
+        line->validation_error = validated->error;
         line->error_offset = 0;
-        return failed_commit(PARSE_OK, validated.error, 0);
+        return failed_commit(PARSE_OK, validated->error, 0);
     }
+    if (has_duplicate_definition(project,
+                                 index,
+                                 &parse_scratch,
+                                 parsed->root,
+                                 validated->role)) {
+        line->status = EXPRESSION_INVALID;
+        line->parse_error = PARSE_OK;
+        line->validation_error = VALIDATION_ERR_DEFINITION;
+        line->error_offset = 0;
+        return failed_commit(PARSE_OK, VALIDATION_ERR_DEFINITION, 0);
+    }
+    line->parse_error = PARSE_OK;
+    line->validation_error = VALIDATION_OK;
+    line->error_offset = 0;
+
+    {
+        CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0};
+        return result;
+    }
+}
+
+CommitResult project_validate_draft(Project *project, uint8_t index) {
+    ParseResult parsed;
+    ValidationResult validated;
+    return validate_draft(project, index, &parsed, &validated);
+}
+
+CommitResult project_commit_line(Project *project, uint8_t index) {
+    ExpressionLine *line;
+    ParseResult parsed;
+    ValidationResult validated;
+    CommitResult checked =
+        validate_draft(project, index, &parsed, &validated);
+
+    if (!checked.ok) {
+        return checked;
+    }
+    line = &project->lines[index];
 
     memcpy(line->committed_source,
            line->draft.text,

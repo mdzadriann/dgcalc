@@ -4,6 +4,8 @@
 #include "app/app.h"
 #include "project/project.h"
 
+#include <stdbool.h>
+
 typedef enum {
     CE_DIRTY_CANCEL,
     CE_DIRTY_DISCARD,
@@ -11,7 +13,9 @@ typedef enum {
 } CeDirtyChoice;
 
 void ce_ui_begin(void);
-void ce_ui_draw(const AppState *state, const Project *project);
+void ce_ui_draw(const AppState *state,
+                const Project *project,
+                bool editing);
 AppAction ce_ui_show_menu(void);
 CeDirtyChoice ce_ui_confirm_dirty(const char *operation);
 void ce_ui_show_message(const char *message);

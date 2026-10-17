@@ -21,6 +21,9 @@ typedef struct {
     unsigned fail_on_operation;
     bool partial_write_success;
     bool close_failure;
+    bool fail_temp_promotion;
+    bool fail_archive;
+    bool fail_temp_delete;
 } FakeStorage;
 
 static FakeStorage fake;
@@ -30,6 +33,8 @@ static Project loaded_project;
 static Project project_snapshot;
 static uint8_t old_bytes[PROJECT_MAX_BYTES];
 static size_t old_length;
+static uint8_t new_bytes[PROJECT_MAX_BYTES];
+static size_t new_length;
 
 static FakeRecord *fake_find(FakeStorage *storage, const char *name) {
     size_t index;
@@ -120,6 +125,9 @@ static bool fake_delete(void *user, const char *name) {
     if (fake_fails(storage)) {
         return false;
     }
+    if (storage->fail_temp_delete && strcmp(name, "DGCTMP") == 0) {
+        return false;
+    }
     record = fake_find(storage, name);
     if (record == NULL) {
         return false;
@@ -134,6 +142,9 @@ static bool fake_rename(void *user, const char *old_name, const char *new_name) 
     FakeRecord *new_record;
 
     if (fake_fails(storage)) {
+        return false;
+    }
+    if (storage->fail_temp_promotion && strcmp(old_name, "DGCTMP") == 0) {
         return false;
     }
     old_record = fake_find(storage, old_name);
@@ -156,6 +167,9 @@ static bool fake_set_archived(void *user, const char *name, bool archived) {
     FakeRecord *record;
 
     if (fake_fails(storage)) {
+        return false;
+    }
+    if (storage->fail_archive) {
         return false;
     }
     record = fake_find(storage, name);
@@ -201,13 +215,27 @@ static void prepare_projects(AppState *old_state, AppState *new_state) {
     project_init(&new_project);
     set_and_commit(&new_project, 0, "a=9");
     set_and_commit(&new_project, 1, "b=a+1");
+    new_length = project_encode(new_state,
+                                &new_project,
+                                new_bytes,
+                                sizeof(new_bytes),
+                                &error);
+    ASSERT_TRUE(new_length > 0);
+}
+
+static void install_record(FakeStorage *storage,
+                           const char *name,
+                           const uint8_t *bytes,
+                           size_t length,
+                           bool archived) {
+    FakeRecord *record = fake_create(storage, name);
+    memcpy(record->bytes, bytes, length);
+    record->length = length;
+    record->archived = archived;
 }
 
 static void install_old_final(FakeStorage *storage) {
-    FakeRecord *record = fake_create(storage, "DGCPROJ");
-    memcpy(record->bytes, old_bytes, old_length);
-    record->length = old_length;
-    record->archived = true;
+    install_record(storage, "DGCPROJ", old_bytes, old_length, true);
 }
 
 static void assert_old_final_is_intact(FakeStorage *storage) {
@@ -339,9 +367,162 @@ static void test_corrupt_load_leaves_destinations_unchanged(void) {
                        sizeof(loaded_project)) == 0);
 }
 
+static void test_load_recovers_a_valid_backup_after_interruption(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState loaded_state;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_old_final(&fake);
+    ASSERT_TRUE(fake_rename(&fake, "DGCPROJ", "DGCBAK"));
+    fake.operation = 0;
+
+    project_init(&loaded_project);
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_TRUE(result.ok);
+    ASSERT_FLOAT_EQ(2.0f, project_evaluate_line(&loaded_project, 0).value);
+    ASSERT_TRUE(fake_exists(&fake, "DGCPROJ"));
+    ASSERT_FALSE(fake_exists(&fake, "DGCBAK"));
+}
+
+static void test_load_replaces_a_corrupt_final_with_a_valid_backup(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState loaded_state;
+    FakeRecord *record;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_old_final(&fake);
+    ASSERT_TRUE(fake_rename(&fake, "DGCPROJ", "DGCBAK"));
+    record = fake_create(&fake, "DGCPROJ");
+    memcpy(record->bytes, "broken", 6);
+    record->length = 6;
+    fake.operation = 0;
+
+    project_init(&loaded_project);
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_TRUE(result.ok);
+    ASSERT_FLOAT_EQ(2.0f, project_evaluate_line(&loaded_project, 0).value);
+    ASSERT_FALSE(fake_exists(&fake, "DGCBAK"));
+}
+
+static void test_save_recovers_backup_before_replacing_it(void) {
+    AppState old_state;
+    AppState new_state;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_old_final(&fake);
+    ASSERT_TRUE(fake_rename(&fake, "DGCPROJ", "DGCBAK"));
+    fake.operation = 0;
+    fake.fail_temp_promotion = true;
+
+    result = project_store_atomic(&fake.backend,
+                                  "DGCPROJ",
+                                  &new_state,
+                                  &new_project);
+    ASSERT_FALSE(result.ok);
+    assert_old_final_is_intact(&fake);
+}
+
+static void test_load_discards_temp_when_final_was_never_rotated(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState loaded_state;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_old_final(&fake);
+    install_record(&fake, "DGCTMP", new_bytes, new_length, false);
+
+    project_init(&loaded_project);
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_TRUE(result.ok);
+    ASSERT_FLOAT_EQ(2.0f, project_evaluate_line(&loaded_project, 0).value);
+    ASSERT_FALSE(fake_exists(&fake, "DGCTMP"));
+}
+
+static void test_load_finishes_promoted_final_recovery(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState loaded_state;
+    FakeRecord *record;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_record(&fake, "DGCPROJ", new_bytes, new_length, false);
+    install_record(&fake, "DGCBAK", old_bytes, old_length, true);
+
+    project_init(&loaded_project);
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_TRUE(result.ok);
+    ASSERT_FLOAT_EQ(10.0f, project_evaluate_line(&loaded_project, 1).value);
+    record = fake_find(&fake, "DGCPROJ");
+    ASSERT_TRUE(record != NULL && record->archived);
+    ASSERT_FALSE(fake_exists(&fake, "DGCBAK"));
+}
+
+static void test_recovery_failures_keep_the_backup(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState loaded_state;
+    StoreResult result;
+
+    prepare_projects(&old_state, &new_state);
+    fake_init(&fake);
+    install_record(&fake, "DGCPROJ", new_bytes, new_length, false);
+    install_record(&fake, "DGCBAK", old_bytes, old_length, true);
+    fake.fail_archive = true;
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_FALSE(result.ok);
+    ASSERT_EQ_INT(STORE_ERR_ARCHIVE, result.error);
+    ASSERT_TRUE(fake_exists(&fake, "DGCBAK"));
+
+    fake_init(&fake);
+    install_record(&fake, "DGCPROJ", new_bytes, new_length, false);
+    install_record(&fake, "DGCBAK", old_bytes, old_length, true);
+    install_record(&fake, "DGCTMP", new_bytes, new_length, false);
+    fake.fail_temp_delete = true;
+    result = project_store_load(&fake.backend,
+                                "DGCPROJ",
+                                &loaded_state,
+                                &loaded_project);
+    ASSERT_FALSE(result.ok);
+    ASSERT_EQ_INT(STORE_ERR_RENAME, result.error);
+    ASSERT_TRUE(fake_exists(&fake, "DGCBAK"));
+}
+
 void run_atomic_store_tests(void) {
     test_every_save_failure_restores_the_old_project();
     test_partial_and_reported_close_failures_preserve_old_project();
     test_success_leaves_only_an_archived_decodable_final();
     test_corrupt_load_leaves_destinations_unchanged();
+    test_load_recovers_a_valid_backup_after_interruption();
+    test_load_replaces_a_corrupt_final_with_a_valid_backup();
+    test_save_recovers_backup_before_replacing_it();
+    test_load_discards_temp_when_final_was_never_rotated();
+    test_load_finishes_promoted_final_recovery();
+    test_recovery_failures_keep_the_backup();
 }

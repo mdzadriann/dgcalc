@@ -89,6 +89,54 @@ static ParseResult parse_repeated_additions(size_t terms) {
     return parser_parse(source, &arena);
 }
 
+static ParseResult parse_repeated_unary(size_t count) {
+    char source[67];
+    AstArena arena;
+    size_t index;
+
+    for (index = 0; index < count; index++) {
+        source[index] = '-';
+    }
+    source[count] = '1';
+    source[count + 1] = '\0';
+    return parser_parse(source, &arena);
+}
+
+static ParseResult parse_power_chain(size_t operators) {
+    char source[2 * 65 + 2];
+    AstArena arena;
+    size_t index;
+
+    for (index = 0; index <= operators; index++) {
+        source[index * 2] = '1';
+        if (index < operators) {
+            source[index * 2 + 1] = '^';
+        }
+    }
+    source[operators * 2 + 1] = '\0';
+    return parser_parse(source, &arena);
+}
+
+static ParseResult parse_mixed_depth(size_t groups, size_t unary) {
+    char source[2 * 64 + 65 + 2];
+    AstArena arena;
+    size_t offset = 0;
+    size_t index;
+
+    for (index = 0; index < groups; index++) {
+        source[offset++] = '(';
+    }
+    for (index = 0; index < unary; index++) {
+        source[offset++] = '-';
+    }
+    source[offset++] = '1';
+    for (index = 0; index < groups; index++) {
+        source[offset++] = ')';
+    }
+    source[offset] = '\0';
+    return parser_parse(source, &arena);
+}
+
 static void test_parser_respects_precedence_and_implicit_multiplication(void) {
     ASSERT_FLOAT_EQ(14.0f, test_parse_and_eval_literal("2+3*4"));
     ASSERT_FLOAT_EQ(20.0f, test_parse_and_eval_literal("2(3+7)"));
@@ -101,6 +149,10 @@ static void test_parser_accepts_relations_in_either_direction(void) {
 
 static void test_parser_stops_at_fixed_limits(void) {
     ASSERT_EQ_INT(PARSE_ERR_DEPTH_LIMIT, parse_nested_parentheses(65).code);
+    ASSERT_EQ_INT(PARSE_ERR_DEPTH_LIMIT, parse_repeated_unary(65).code);
+    ASSERT_EQ_INT(PARSE_ERR_DEPTH_LIMIT, parse_power_chain(65).code);
+    ASSERT_TRUE(parse_mixed_depth(32, 32).ok);
+    ASSERT_EQ_INT(PARSE_ERR_DEPTH_LIMIT, parse_mixed_depth(32, 33).code);
     ASSERT_EQ_INT(PARSE_ERR_NODE_LIMIT,
                   parse_repeated_additions(AST_MAX_NODES + 1).code);
 }

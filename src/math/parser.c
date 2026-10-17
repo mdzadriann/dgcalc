@@ -158,8 +158,14 @@ static AstId parse_power(Parser *parser) {
 
     if (left != AST_NONE && parser->current.kind == TOKEN_CARET) {
         AstId right;
+        uint16_t offset = parser->current.offset;
+
+        if (!enter_group(parser, offset)) {
+            return AST_NONE;
+        }
         advance(parser);
         right = parse_unary(parser);
+        parser->depth--;
         if (right == AST_NONE) {
             return AST_NONE;
         }
@@ -175,8 +181,14 @@ static AstId parse_unary(Parser *parser) {
     if (kind == TOKEN_PLUS || kind == TOKEN_MINUS) {
         AstId operand;
         AstOp op = kind == TOKEN_MINUS ? AST_OP_NEG : AST_OP_POS;
+        uint16_t offset = parser->current.offset;
+
+        if (!enter_group(parser, offset)) {
+            return AST_NONE;
+        }
         advance(parser);
         operand = parse_unary(parser);
+        parser->depth--;
         if (operand == AST_NONE) {
             return AST_NONE;
         }

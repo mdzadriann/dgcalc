@@ -27,6 +27,9 @@ static EvalResult eval_symbol(uint8_t name, const EvalContext *context) {
     if (name == 'e') {
         return make_result(2.71828182845904523536f, EVAL_OK);
     }
+    if (name >= AST_NAME_SIN) {
+        return make_result(0.0f, EVAL_ERR_UNDEFINED);
+    }
     if (context == NULL || context->resolve_symbol == NULL) {
         return make_result(0.0f, EVAL_ERR_UNDEFINED);
     }
@@ -82,6 +85,9 @@ static EvalResult eval_call(uint8_t name,
             value = ceilf(argument);
             break;
         default:
+            if (name >= AST_NAME_PI) {
+                return make_result(0.0f, EVAL_ERR_UNDEFINED);
+            }
             if (context == NULL || context->resolve_call == NULL) {
                 return make_result(0.0f, EVAL_ERR_UNDEFINED);
             }

@@ -83,7 +83,8 @@ static void draw_key_bar(void) {
 
 static void draw_expression_list(const AppState *state,
                                  const Project *project,
-                                 int width) {
+                                 int width,
+                                 bool editing) {
     uint8_t visible = 8;
     uint8_t start = state->selected_expression >= visible
                         ? (uint8_t)(state->selected_expression - visible + 1)
@@ -97,6 +98,8 @@ static void draw_expression_list(const AppState *state,
         const ExpressionLine *line;
         int y = 30 + row * 23;
         const char *error;
+        uint8_t characters;
+        uint16_t text_start = 0;
 
         if (index >= PROJECT_MAX_EXPRESSIONS) {
             break;
@@ -111,11 +114,28 @@ static void draw_expression_list(const AppState *state,
         gfx_SetTextXY(7, y + 2);
         gfx_PrintUInt((unsigned int)index + 1, index >= 9 ? 2 : 1);
         gfx_SetTextFGColor(COLOR_TEXT);
-        print_clipped(line->draft.text,
+        characters = width > 200 ? (error[0] == '\0' ? 34 : 25)
+                                 : (error[0] == '\0' ? 12 : 10);
+        if (editing && index == state->selected_expression &&
+            line->draft.cursor >= characters) {
+            text_start = (uint16_t)(line->draft.cursor - characters + 1);
+        }
+        print_clipped(&line->draft.text[text_start],
                       27,
                       y + 2,
-                      width > 200 ? (error[0] == '\0' ? 34 : 25)
-                                  : (error[0] == '\0' ? 12 : 10));
+                      characters);
+        if (editing && index == state->selected_expression) {
+            char prefix[41];
+            uint16_t prefix_length =
+                (uint16_t)(line->draft.cursor - text_start);
+            int caret_x;
+
+            memcpy(prefix, &line->draft.text[text_start], prefix_length);
+            prefix[prefix_length] = '\0';
+            caret_x = 27 + gfx_GetStringWidth(prefix);
+            gfx_SetColor(COLOR_BLUE);
+            gfx_VertLine_NoClip(caret_x, y + 1, 11);
+        }
         if (error[0] != '\0') {
             gfx_SetTextFGColor(COLOR_RED);
             print_clipped(width > 200 ? error : "!",
@@ -153,7 +173,7 @@ static void draw_graph_panel(int x, int width, GraphMode mode) {
                       center_x - 28,
                       100);
     gfx_SetTextFGColor(COLOR_MUTED);
-    gfx_PrintStringXY("plotting in M2", center_x - 48, 117);
+    gfx_PrintStringXY("plotting later", center_x - 48, 117);
 }
 
 void ce_ui_begin(void) {
@@ -166,13 +186,15 @@ void ce_ui_begin(void) {
     gfx_SetTextTransparentColor(COLOR_PANEL);
 }
 
-void ce_ui_draw(const AppState *state, const Project *project) {
+void ce_ui_draw(const AppState *state,
+                const Project *project,
+                bool editing) {
     gfx_FillScreen(COLOR_BACKGROUND);
     draw_header(state);
     if (state->view == APP_VIEW_EXPRESSIONS) {
-        draw_expression_list(state, project, 320);
+        draw_expression_list(state, project, 320, editing);
     } else if (state->view == APP_VIEW_SPLIT) {
-        draw_expression_list(state, project, 132);
+        draw_expression_list(state, project, 132, editing);
         draw_graph_panel(132, 188, state->mode);
     } else {
         draw_graph_panel(0, 320, state->mode);

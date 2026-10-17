@@ -154,9 +154,13 @@ static bool bytes_are_text(const uint8_t *data, size_t length) {
     return true;
 }
 
-static bool validate_source(const uint8_t *data, uint16_t length) {
+static bool validate_source(const uint8_t *data,
+                            uint16_t length,
+                            ExprRole *role,
+                            uint8_t *definition_name) {
     ParseResult parsed;
     ValidationResult validated;
+    const AstNode *root;
 
     memcpy(source_scratch, data, length);
     source_scratch[length] = '\0';
@@ -165,7 +169,16 @@ static bool validate_source(const uint8_t *data, uint16_t length) {
         return false;
     }
     validated = expression_validate(&validation_arena, parsed.root);
-    return validated.ok;
+    if (!validated.ok) {
+        return false;
+    }
+    *role = validated.role;
+    if (validated.role == EXPR_ROLE_DEFINITION ||
+        validated.role == EXPR_ROLE_FUNCTION_DEFINITION) {
+        root = &validation_arena.nodes[parsed.root];
+        *definition_name = validation_arena.nodes[root->left].name;
+    }
+    return true;
 }
 
 static bool validate_payload(const uint8_t *input,
@@ -173,11 +186,15 @@ static bool validate_payload(const uint8_t *input,
                              uint8_t count,
                              CodecError *error) {
     size_t offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
+    uint32_t scalar_definitions = 0;
+    uint32_t function_definitions = 0;
     uint8_t index;
 
     for (index = 0; index < count; index++) {
         uint16_t committed;
         uint16_t draft;
+        ExprRole role = EXPR_ROLE_INVALID;
+        uint8_t definition_name = 0;
 
         if (offset + 2 > length) {
             set_error(error, CODEC_ERR_LENGTH);
@@ -187,12 +204,28 @@ static bool validate_payload(const uint8_t *input,
         offset += 2;
         if (committed >= EDITOR_CAPACITY || offset + committed > length ||
             !bytes_are_text(&input[offset], committed) ||
-            (committed != 0 && !validate_source(&input[offset], committed))) {
+            (committed != 0 &&
+             !validate_source(&input[offset],
+                              committed,
+                              &role,
+                              &definition_name))) {
             set_error(error, committed >= EDITOR_CAPACITY ||
                                      offset + committed > length
                                  ? CODEC_ERR_LENGTH
                                  : CODEC_ERR_CONTENT);
             return false;
+        }
+        if (role == EXPR_ROLE_DEFINITION ||
+            role == EXPR_ROLE_FUNCTION_DEFINITION) {
+            uint32_t bit = UINT32_C(1) << (definition_name - 'a');
+            uint32_t *definitions = role == EXPR_ROLE_DEFINITION
+                                        ? &scalar_definitions
+                                        : &function_definitions;
+            if ((*definitions & bit) != 0) {
+                set_error(error, CODEC_ERR_CONTENT);
+                return false;
+            }
+            *definitions |= bit;
         }
         offset += committed;
 
@@ -318,8 +351,19 @@ bool project_decode(AppState *state_destination,
         offset += committed;
         draft = read_u16(&input[offset]);
         offset += 2;
+        offset += draft;
+    }
+
+    offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
+    for (index = 0; index < metadata.count; index++) {
+        uint16_t committed = read_u16(&input[offset]);
+        uint16_t draft;
+        offset += 2 + committed;
+        draft = read_u16(&input[offset]);
+        offset += 2;
         copy_source(source_scratch, &input[offset], draft);
         (void)project_set_draft(project_destination, index, source_scratch);
+        (void)project_validate_draft(project_destination, index);
         offset += draft;
     }
 
