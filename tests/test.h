@@ -2,6 +2,7 @@
 #define DGCALC_TEST_H
 
 #include <stdio.h>
+#include <string.h>
 
 extern int test_checks;
 extern int test_failures;
@@ -28,6 +29,20 @@ void test_fail(const char *file, int line, const char *message);
             snprintf(test_message, sizeof(test_message),                          \
                      "expected %ld, got %ld: %s", test_expected, test_actual,    \
                      #actual);                                                    \
+            test_fail(__FILE__, __LINE__, test_message);                          \
+        }                                                                         \
+    } while (0)
+
+#define ASSERT_STR_EQ(expected, actual)                                           \
+    do {                                                                          \
+        const char *test_expected = (expected);                                   \
+        const char *test_actual = (actual);                                       \
+        test_checks++;                                                            \
+        if (strcmp(test_expected, test_actual) != 0) {                            \
+            char test_message[320];                                               \
+            snprintf(test_message, sizeof(test_message),                          \
+                     "expected \"%s\", got \"%s\": %s", test_expected,      \
+                     test_actual, #actual);                                       \
             test_fail(__FILE__, __LINE__, test_message);                          \
         }                                                                         \
     } while (0)
