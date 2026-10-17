@@ -47,4 +47,22 @@ void test_fail(const char *file, int line, const char *message);
         }                                                                         \
     } while (0)
 
+#define ASSERT_FLOAT_EQ(expected, actual)                                         \
+    do {                                                                          \
+        float test_expected = (float)(expected);                                  \
+        float test_actual = (float)(actual);                                      \
+        float test_difference = test_expected - test_actual;                      \
+        test_checks++;                                                            \
+        if (test_difference < 0.0f) {                                             \
+            test_difference = -test_difference;                                   \
+        }                                                                         \
+        if (test_difference > 0.0001f) {                                          \
+            char test_message[160];                                               \
+            snprintf(test_message, sizeof(test_message),                          \
+                     "expected %.7g, got %.7g: %s", (double)test_expected,       \
+                     (double)test_actual, #actual);                               \
+            test_fail(__FILE__, __LINE__, test_message);                          \
+        }                                                                         \
+    } while (0)
+
 #endif
