@@ -227,20 +227,20 @@ static void copy_source(char *destination,
     destination[length] = '\0';
 }
 
-bool project_decode(AppState *state_destination,
-                    Project *project_destination,
-                    const uint8_t *input,
-                    size_t length,
-                    CodecError *error) {
-    uint32_t payload_length;
+typedef struct {
     uint8_t mode;
     uint8_t view;
     uint8_t selected;
     uint8_t count;
-    size_t offset;
-    uint8_t index;
+} CodecMetadata;
 
-    if (length < CODEC_HEADER_BYTES) {
+static bool validate_document(const uint8_t *input,
+                              size_t length,
+                              CodecError *error,
+                              CodecMetadata *metadata) {
+    uint32_t payload_length;
+
+    if (input == NULL || length < CODEC_HEADER_BYTES) {
         set_error(error, CODEC_ERR_LENGTH);
         return false;
     }
@@ -266,23 +266,47 @@ bool project_decode(AppState *state_destination,
         return false;
     }
 
-    mode = input[13];
-    view = input[14];
-    selected = input[15];
-    count = input[16];
-    if (mode > GRAPH_MODE_3D || view > APP_VIEW_GRAPH ||
-        selected >= PROJECT_MAX_EXPRESSIONS ||
-        count > PROJECT_MAX_EXPRESSIONS) {
+    metadata->mode = input[13];
+    metadata->view = input[14];
+    metadata->selected = input[15];
+    metadata->count = input[16];
+    if (metadata->mode > GRAPH_MODE_3D || metadata->view > APP_VIEW_GRAPH ||
+        metadata->selected >= PROJECT_MAX_EXPRESSIONS ||
+        metadata->count > PROJECT_MAX_EXPRESSIONS) {
         set_error(error, CODEC_ERR_CONTENT);
         return false;
     }
-    if (!validate_payload(input, length, count, error)) {
+    if (!validate_payload(input, length, metadata->count, error)) {
+        return false;
+    }
+    set_error(error, CODEC_OK);
+    return true;
+}
+
+bool project_validate(const uint8_t *input,
+                      size_t length,
+                      CodecError *error) {
+    CodecMetadata metadata;
+    return validate_document(input, length, error, &metadata);
+}
+
+bool project_decode(AppState *state_destination,
+                    Project *project_destination,
+                    const uint8_t *input,
+                    size_t length,
+                    CodecError *error) {
+    CodecMetadata metadata;
+    size_t offset;
+    uint8_t index;
+
+    if (state_destination == NULL || project_destination == NULL ||
+        !validate_document(input, length, error, &metadata)) {
         return false;
     }
 
     project_init(project_destination);
     offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
-    for (index = 0; index < count; index++) {
+    for (index = 0; index < metadata.count; index++) {
         uint16_t committed = read_u16(&input[offset]);
         uint16_t draft;
         offset += 2;
@@ -299,11 +323,11 @@ bool project_decode(AppState *state_destination,
         offset += draft;
     }
 
-    project_destination->count = count;
+    project_destination->count = metadata.count;
     project_destination->dirty = false;
-    state_destination->mode = (GraphMode)mode;
-    state_destination->view = (AppView)view;
-    state_destination->selected_expression = selected;
+    state_destination->mode = (GraphMode)metadata.mode;
+    state_destination->view = (AppView)metadata.view;
+    state_destination->selected_expression = metadata.selected;
     set_error(error, CODEC_OK);
     return true;
 }

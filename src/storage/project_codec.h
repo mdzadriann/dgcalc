@@ -28,6 +28,9 @@ size_t project_encode(const AppState *state,
                       uint8_t *output,
                       size_t capacity,
                       CodecError *error);
+bool project_validate(const uint8_t *input,
+                      size_t length,
+                      CodecError *error);
 bool project_decode(AppState *state_destination,
                     Project *project_destination,
                     const uint8_t *input,
