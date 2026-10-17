@@ -8,6 +8,7 @@ void run_editor_tests(void);
 void run_parser_tests(void);
 void run_eval_tests(void);
 void run_project_tests(void);
+void run_project_codec_tests(void);
 
 void test_fail(const char *file, int line, const char *message) {
     test_failures++;
@@ -20,6 +21,7 @@ int main(void) {
     run_parser_tests();
     run_eval_tests();
     run_project_tests();
+    run_project_codec_tests();
     printf("%d checks, %d failures\n", test_checks, test_failures);
     return test_failures == 0 ? 0 : 1;
 }
