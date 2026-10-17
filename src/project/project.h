@@ -10,7 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PROJECT_MAX_EXPRESSIONS 32
+/* shortcut: M1 keeps 16 cached ASTs to fit CE RAM; pool ASTs before raising it. */
+#define PROJECT_MAX_EXPRESSIONS 16
 
 typedef enum {
     EXPRESSION_EMPTY,

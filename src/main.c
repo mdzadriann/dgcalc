@@ -1,8 +1,193 @@
 #include "app/app.h"
+#include "platform/ce/appvar_backend.h"
+#include "platform/ce/ce_input.h"
+#include "platform/ce/ce_ui.h"
+#include "project/project.h"
+#include "storage/atomic_store.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define PROJECT_NAME "DGCPROJ"
+
+static AppState app_state;
+static Project project;
+static StorageBackend storage;
+static ExpressionLine edit_backup;
+static uint8_t count_before_edit;
+static bool dirty_before_edit;
+
+static const char *storage_error_message(StoreError error) {
+    switch (error) {
+        case STORE_ERR_ENCODE: return "Project is too large";
+        case STORE_ERR_WRITE: return "Write failed";
+        case STORE_ERR_VALIDATE: return "Saved data is invalid";
+        case STORE_ERR_RENAME: return "Replace failed; old save kept";
+        case STORE_ERR_ARCHIVE: return "Archive failed; old save kept";
+        case STORE_ERR_READ: return "Project could not be read";
+        case STORE_OK: return "OK";
+        default: return "Storage error";
+    }
+}
+
+static bool save_project(bool announce) {
+    StoreResult result = project_store_atomic(&storage,
+                                              PROJECT_NAME,
+                                              &app_state,
+                                              &project);
+    if (!result.ok) {
+        ce_ui_show_message(storage_error_message(result.error));
+        return false;
+    }
+    project.dirty = false;
+    if (announce) {
+        ce_ui_show_message("Project saved");
+    }
+    return true;
+}
+
+static bool confirm_data_loss(const char *operation) {
+    CeDirtyChoice choice;
+
+    if (!project.dirty) {
+        return true;
+    }
+    choice = ce_ui_confirm_dirty(operation);
+    if (choice == CE_DIRTY_CANCEL) {
+        return false;
+    }
+    return choice == CE_DIRTY_DISCARD || save_project(false);
+}
+
+static void begin_edit(bool *editing) {
+    uint8_t index = app_state.selected_expression;
+
+    edit_backup = project.lines[index];
+    count_before_edit = project.count;
+    dirty_before_edit = project.dirty;
+    if (index >= project.count) {
+        project.count = (uint8_t)(index + 1);
+    }
+    *editing = true;
+}
+
+static void cancel_edit(bool *editing) {
+    uint8_t index = app_state.selected_expression;
+
+    project.lines[index] = edit_backup;
+    project.count = count_before_edit;
+    project.dirty = dirty_before_edit;
+    *editing = false;
+}
+
+static void handle_action(AppAction action, bool *editing, bool *running) {
+    uint8_t index = app_state.selected_expression;
+
+    switch (action) {
+        case APP_ACTION_SHOW_EXPRESSIONS:
+        case APP_ACTION_SHOW_SPLIT:
+        case APP_ACTION_SHOW_GRAPH:
+            (void)app_handle_action(&app_state, action);
+            break;
+        case APP_ACTION_MOVE_SELECTION_UP:
+            if (index > 0) {
+                app_state.selected_expression--;
+            }
+            break;
+        case APP_ACTION_MOVE_SELECTION_DOWN:
+            if (index + 1 < PROJECT_MAX_EXPRESSIONS) {
+                app_state.selected_expression++;
+            }
+            break;
+        case APP_ACTION_BEGIN_EDIT:
+            if (!*editing) {
+                begin_edit(editing);
+            }
+            break;
+        case APP_ACTION_COMMIT_EDIT:
+            if (*editing && project_commit_line(&project, index).ok) {
+                *editing = false;
+            }
+            break;
+        case APP_ACTION_CANCEL_EDIT:
+            if (*editing) {
+                cancel_edit(editing);
+            }
+            break;
+        case APP_ACTION_SAVE_PROJECT:
+            (void)save_project(true);
+            break;
+        case APP_ACTION_LOAD_PROJECT:
+            if (confirm_data_loss("Load saved project?")) {
+                StoreResult result = project_store_load(&storage,
+                                                        PROJECT_NAME,
+                                                        &app_state,
+                                                        &project);
+                if (!result.ok) {
+                    ce_ui_show_message(storage_error_message(result.error));
+                } else {
+                    *editing = false;
+                }
+            }
+            break;
+        case APP_ACTION_NEW_PROJECT:
+            if (confirm_data_loss("Start new project?")) {
+                app_state_init(&app_state);
+                project_init(&project);
+                *editing = false;
+            }
+            break;
+        case APP_ACTION_TOGGLE_GRAPH_MODE:
+            (void)app_handle_action(&app_state, action);
+            project.dirty = true;
+            break;
+        case APP_ACTION_OPEN_MENU:
+            handle_action(ce_ui_show_menu(), editing, running);
+            break;
+        case APP_ACTION_QUIT:
+            if (confirm_data_loss("Quit DGCALC?")) {
+                *running = false;
+            }
+            break;
+        case APP_ACTION_NONE:
+            break;
+    }
+}
 
 int main(void) {
-    AppState state;
+    bool running = true;
+    bool editing = false;
+    bool redraw = true;
 
-    app_state_init(&state);
+    app_state_init(&app_state);
+    project_init(&project);
+    ce_ui_begin();
+    ce_input_begin();
+    storage = ce_appvar_backend();
+
+    while (running) {
+        EditorBuffer *editor =
+            &project.lines[app_state.selected_expression].draft;
+        uint16_t length_before;
+        AppAction action;
+
+        if (redraw) {
+            ce_ui_draw(&app_state, &project);
+            redraw = false;
+        }
+        length_before = editor->length;
+        action = ce_input_poll(editor, editing);
+        if (editor->length != length_before) {
+            project.dirty = true;
+            redraw = true;
+        }
+        if (action != APP_ACTION_NONE) {
+            handle_action(action, &editing, &running);
+            redraw = true;
+        }
+    }
+
+    ce_input_end();
+    ce_ui_end();
     return 0;
 }
