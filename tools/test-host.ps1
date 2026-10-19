@@ -42,12 +42,14 @@ if (Test-Path -LiteralPath $sourceRoot) {
 }
 $sources += Get-ChildItem -Path (Join-Path $repoRoot 'tests') -Filter '*.c' -Recurse |
     Select-Object -ExpandProperty FullName
+$sources += Join-Path $sourceRoot 'platform\ce\ce_ui.c'
 
 $arguments = @(
     '-std=c11',
     '-Wall',
     '-Wextra',
     '-Werror',
+    "-I$(Join-Path $repoRoot 'tests\fakes')",
     "-I$(Join-Path $repoRoot 'src')",
     "-I$(Join-Path $repoRoot 'tests')"
 ) + $sources + @('-o', $output)

@@ -10,6 +10,7 @@ void run_eval_tests(void);
 void run_project_tests(void);
 void run_project_codec_tests(void);
 void run_atomic_store_tests(void);
+void run_ce_ui_tests(void);
 
 void test_fail(const char *file, int line, const char *message) {
     test_failures++;
@@ -24,6 +25,7 @@ int main(void) {
     run_project_tests();
     run_project_codec_tests();
     run_atomic_store_tests();
+    run_ce_ui_tests();
     printf("%d checks, %d failures\n", test_checks, test_failures);
     return test_failures == 0 ? 0 : 1;
 }

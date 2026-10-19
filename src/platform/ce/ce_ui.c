@@ -72,13 +72,38 @@ static void draw_header(const AppState *state) {
     gfx_PrintStringXY(state->mode == GRAPH_MODE_2D ? "2D" : "3D", 292, 8);
 }
 
-static void draw_key_bar(void) {
+static void draw_key_bar(const AppState *state) {
+    static const char *const labels[] = {
+        "Expr", "Split", "2D/3D", "Menu", "Graph"
+    };
+    uint8_t index;
+
     gfx_SetColor(COLOR_PANEL);
     gfx_FillRectangle_NoClip(0, 220, 320, 20);
     gfx_SetColor(COLOR_GRID);
     gfx_HorizLine_NoClip(0, 220, 320);
-    gfx_SetTextFGColor(COLOR_MUTED);
-    gfx_PrintStringXY("Y=Expr WINDOW=Split ZOOM=Mode TRACE=Menu GRAPH", 5, 227);
+    for (index = 0; index < 5; index++) {
+        int left = index * 64;
+        int text_width = gfx_GetStringWidth(labels[index]);
+        bool active = (index == 0 && state->view == APP_VIEW_EXPRESSIONS) ||
+                      (index == 1 && state->view == APP_VIEW_SPLIT) ||
+                      (index == 4 && state->view == APP_VIEW_GRAPH);
+
+        if (index > 0) {
+            gfx_SetColor(COLOR_GRID);
+            gfx_VertLine_NoClip(left, 220, 20);
+        }
+        if (active) {
+            gfx_SetColor(COLOR_BLUE);
+            gfx_FillRectangle_NoClip(left + 1, 221, 63, 19);
+            gfx_SetTextFGColor(COLOR_PANEL);
+        } else {
+            gfx_SetTextFGColor(COLOR_MUTED);
+        }
+        gfx_PrintStringXY(labels[index],
+                          left + (64 - text_width) / 2,
+                          227);
+    }
 }
 
 static void draw_expression_list(const AppState *state,
@@ -199,7 +224,7 @@ void ce_ui_draw(const AppState *state,
     } else {
         draw_graph_panel(0, 320, state->mode);
     }
-    draw_key_bar();
+    draw_key_bar(state);
     gfx_SwapDraw();
 }
 
@@ -275,7 +300,7 @@ static void draw_dialog(const char *title,
         }
         gfx_PrintStringXY(options[index], 73, y);
     }
-    gfx_SwapDraw();
+    gfx_BlitBuffer();
 }
 
 AppAction ce_ui_show_menu(void) {
