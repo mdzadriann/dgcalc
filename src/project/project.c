@@ -167,6 +167,96 @@ void project_init(Project *project) {
         project->lines[index].status = EXPRESSION_EMPTY;
     }
     dependency_graph_clear(&project->dependencies);
+    project->editing_index = PROJECT_MAX_EXPRESSIONS;
+}
+
+bool project_begin_edit(Project *project, uint8_t index) {
+    if (index >= PROJECT_MAX_EXPRESSIONS || project->editing) {
+        return false;
+    }
+    project->edit_backup = project->lines[index];
+    project->count_before_edit = project->count;
+    project->dirty_before_edit = project->dirty;
+    project->editing_index = index;
+    project->editing = true;
+    if (index >= project->count) {
+        project->count = (uint8_t)(index + 1);
+    }
+    return true;
+}
+
+bool project_is_editing(const Project *project) {
+    return project->editing && project->editing_index < PROJECT_MAX_EXPRESSIONS;
+}
+
+uint8_t project_editing_index(const Project *project) {
+    return project_is_editing(project) ? project->editing_index
+                                       : PROJECT_MAX_EXPRESSIONS;
+}
+
+EditorBuffer *project_editor(Project *project) {
+    return project_is_editing(project)
+               ? &project->lines[project->editing_index].draft : NULL;
+}
+
+uint16_t project_editor_cursor(const Project *project) {
+    return project_is_editing(project)
+               ? project->lines[project->editing_index].draft.cursor : 0;
+}
+
+void project_cancel_edit(Project *project) {
+    if (!project_is_editing(project)) {
+        return;
+    }
+    project->lines[project->editing_index] = project->edit_backup;
+    project->count = project->count_before_edit;
+    project->dirty = project->dirty_before_edit;
+    project->editing = false;
+    project->editing_index = PROJECT_MAX_EXPRESSIONS;
+    rebuild_dependencies(project);
+}
+
+const char *project_line_source(const Project *project, uint8_t index) {
+    return project_line_has_committed(project, index)
+               ? project->lines[index].committed_source : "";
+}
+
+const char *project_line_display_text(const Project *project, uint8_t index) {
+    return index < project->count && index < PROJECT_MAX_EXPRESSIONS
+               ? project->lines[index].draft.text : "";
+}
+
+bool project_line_has_committed(const Project *project, uint8_t index) {
+    return index < project->count && index < PROJECT_MAX_EXPRESSIONS &&
+           project->lines[index].has_committed;
+}
+
+ExpressionStatus project_line_status(const Project *project, uint8_t index) {
+    return index < project->count && index < PROJECT_MAX_EXPRESSIONS
+               ? project->lines[index].status : EXPRESSION_EMPTY;
+}
+
+ExprRole project_line_role(const Project *project, uint8_t index) {
+    return project_line_has_committed(project, index)
+               ? project->lines[index].role : EXPR_ROLE_INVALID;
+}
+
+bool project_line_tree(const Project *project, uint8_t index,
+                      AstView *tree, AstId *root) {
+    if (tree != NULL) {
+        tree->nodes = NULL;
+        tree->count = 0;
+    }
+    if (root != NULL) {
+        *root = AST_NONE;
+    }
+    if (!project_line_has_committed(project, index) ||
+        tree == NULL || root == NULL) {
+        return false;
+    }
+    *tree = ast_arena_view(&project->lines[index].arena);
+    *root = project->lines[index].root;
+    return true;
 }
 
 bool project_set_draft(Project *project, uint8_t index, const char *source) {
@@ -273,6 +363,10 @@ CommitResult project_commit_line(Project *project, uint8_t index) {
     if (index < project->count && project->lines[index].draft.length == 0) {
         CommitResult cleared = {true, PARSE_OK, VALIDATION_OK, 0};
         (void)project_clear_line(project, index);
+        if (project_editing_index(project) == index) {
+            project->editing = false;
+            project->editing_index = PROJECT_MAX_EXPRESSIONS;
+        }
         return cleared;
     }
     checked = validate_draft(project, index, &parsed, &validated);
@@ -295,6 +389,10 @@ CommitResult project_commit_line(Project *project, uint8_t index) {
     line->error_offset = 0;
     project->dirty = true;
     project_mark_dependents_dirty(project, index);
+    if (project_editing_index(project) == index) {
+        project->editing = false;
+        project->editing_index = PROJECT_MAX_EXPRESSIONS;
+    }
 
     {
         CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0};

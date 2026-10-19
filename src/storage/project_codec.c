@@ -92,18 +92,15 @@ size_t project_encode(const AppState *state,
     }
 
     for (index = 0; index < project->count; index++) {
-        const ExpressionLine *line = &project->lines[index];
         size_t committed = 0;
         size_t draft;
 
-        if ((line->has_committed &&
-             !text_length(line->committed_source, &committed)) ||
-            !text_length(line->draft.text, &draft) ||
-            draft != line->draft.length) {
+        if (!text_length(project_line_source(project, index), &committed) ||
+            !text_length(project_line_display_text(project, index), &draft)) {
             set_error(error, CODEC_ERR_CONTENT);
             return 0;
         }
-        committed_lengths[index] = line->has_committed ? committed : 0;
+        committed_lengths[index] = committed;
         draft_lengths[index] = draft;
         needed += 4 + committed_lengths[index] + draft;
     }
@@ -122,17 +119,16 @@ size_t project_encode(const AppState *state,
     output[offset++] = project->count;
 
     for (index = 0; index < project->count; index++) {
-        const ExpressionLine *line = &project->lines[index];
         size_t committed = committed_lengths[index];
         size_t draft = draft_lengths[index];
 
         write_u16(&output[offset], (uint16_t)committed);
         offset += 2;
-        memcpy(&output[offset], line->committed_source, committed);
+        memcpy(&output[offset], project_line_source(project, index), committed);
         offset += committed;
         write_u16(&output[offset], (uint16_t)draft);
         offset += 2;
-        memcpy(&output[offset], line->draft.text, draft);
+        memcpy(&output[offset], project_line_display_text(project, index), draft);
         offset += draft;
     }
 

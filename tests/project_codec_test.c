@@ -8,7 +8,6 @@ static uint8_t encoded[PROJECT_MAX_BYTES];
 static uint8_t damaged[PROJECT_MAX_BYTES];
 static Project source_project;
 static Project destination_project;
-static Project project_before;
 
 static void set_and_commit(Project *project, uint8_t index, const char *source) {
     ASSERT_TRUE(project_set_draft(project, index, source));
@@ -62,12 +61,13 @@ static void test_project_codec_round_trips_committed_and_draft_sources(void) {
     ASSERT_EQ_INT(CODEC_OK, error);
     assert_state_equal(&source_state, &destination_state);
     ASSERT_EQ_INT(2, destination_project.count);
-    ASSERT_STR_EQ("a=2", destination_project.lines[0].committed_source);
-    ASSERT_STR_EQ("a=", destination_project.lines[0].draft.text);
-    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[0].status);
+    ASSERT_STR_EQ("a=2", project_line_source(&destination_project, 0));
+    ASSERT_STR_EQ("a=", project_line_display_text(&destination_project, 0));
+    ASSERT_EQ_INT(EXPRESSION_INVALID,
+                  project_line_status(&destination_project, 0));
     ASSERT_EQ_INT(PARSE_ERR_EXPECTED,
-                  destination_project.lines[0].parse_error);
-    ASSERT_STR_EQ("b=a+3", destination_project.lines[1].committed_source);
+                  project_validate_draft(&destination_project, 0).parse_error);
+    ASSERT_STR_EQ("b=a+3", project_line_source(&destination_project, 1));
     ASSERT_FALSE(destination_project.dirty);
     ASSERT_FLOAT_EQ(5.0f,
                     project_evaluate_line(&destination_project, 1).value);
@@ -124,12 +124,13 @@ static void test_project_codec_round_trips_a_cleared_definition(void) {
                                encoded,
                                length,
                                &error));
-    ASSERT_STR_EQ("", destination_project.lines[0].draft.text);
-    ASSERT_STR_EQ("", destination_project.lines[0].committed_source);
-    ASSERT_FALSE(destination_project.lines[0].has_committed);
-    ASSERT_EQ_INT(EXPRESSION_EMPTY, destination_project.lines[0].status);
+    ASSERT_STR_EQ("", project_line_display_text(&destination_project, 0));
+    ASSERT_STR_EQ("", project_line_source(&destination_project, 0));
+    ASSERT_FALSE(project_line_has_committed(&destination_project, 0));
+    ASSERT_EQ_INT(EXPRESSION_EMPTY,
+                  project_line_status(&destination_project, 0));
     ASSERT_EQ_INT(EXPRESSION_UNDEFINED,
-                  destination_project.lines[1].status);
+                  project_line_status(&destination_project, 1));
     ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
                   project_evaluate_line(&destination_project, 1).error);
     ASSERT_FALSE(destination_project.dirty);
@@ -150,7 +151,6 @@ static void assert_rejected_without_mutation(const uint8_t *input,
     set_and_commit(&destination_project, 0, "q=9");
     destination_project.dirty = false;
     state_before = destination_state;
-    project_before = destination_project;
 
     ASSERT_FALSE(project_decode(&destination_state,
                                 &destination_project,
@@ -158,12 +158,15 @@ static void assert_rejected_without_mutation(const uint8_t *input,
                                 length,
                                 &error));
     ASSERT_EQ_INT(expected_error, error);
-    ASSERT_TRUE(memcmp(&state_before,
-                       &destination_state,
-                       sizeof(state_before)) == 0);
-    ASSERT_TRUE(memcmp(&project_before,
-                       &destination_project,
-                       sizeof(project_before)) == 0);
+    assert_state_equal(&state_before, &destination_state);
+    ASSERT_EQ_INT(1, destination_project.count);
+    ASSERT_FALSE(destination_project.dirty);
+    ASSERT_STR_EQ("q=9", project_line_source(&destination_project, 0));
+    ASSERT_STR_EQ("q=9", project_line_display_text(&destination_project, 0));
+    ASSERT_EQ_INT(EXPRESSION_VALID,
+                  project_line_status(&destination_project, 0));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_line(&destination_project, 0).error);
+    ASSERT_FLOAT_EQ(9.0f, project_evaluate_line(&destination_project, 0).value);
 }
 
 static void test_project_codec_rejects_corrupt_inputs_transactionally(void) {
@@ -196,14 +199,22 @@ static void test_project_codec_rejects_duplicate_saved_definitions(void) {
     app_state_init(&source_state);
     project_init(&source_project);
     set_and_commit(&source_project, 0, "a=2");
-    source_project.lines[1] = source_project.lines[0];
-    source_project.count = 2;
+    set_and_commit(&source_project, 1, "b=2");
     length = project_encode(&source_state,
                             &source_project,
                             encoded,
                             sizeof(encoded),
                             &error);
     ASSERT_TRUE(length > 0);
+    /* Corrupt the second committed definition, then repair the payload CRC. */
+    encoded[29] = 'a';
+    {
+        uint32_t crc = project_crc32(&encoded[13], length - 13);
+        encoded[9] = (uint8_t)crc;
+        encoded[10] = (uint8_t)(crc >> 8);
+        encoded[11] = (uint8_t)(crc >> 16);
+        encoded[12] = (uint8_t)(crc >> 24);
+    }
     assert_rejected_without_mutation(encoded, length, CODEC_ERR_CONTENT);
 }
 
@@ -239,22 +250,28 @@ static void test_project_codec_restores_duplicate_draft_errors(void) {
                                encoded,
                                length,
                                &error));
-    ASSERT_STR_EQ("g=3", destination_project.lines[0].committed_source);
-    ASSERT_STR_EQ("a=9", destination_project.lines[0].draft.text);
-    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[0].status);
+    ASSERT_STR_EQ("g=3", project_line_source(&destination_project, 0));
+    ASSERT_STR_EQ("a=9", project_line_display_text(&destination_project, 0));
+    ASSERT_EQ_INT(EXPRESSION_INVALID,
+                  project_line_status(&destination_project, 0));
     ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
-                  destination_project.lines[0].validation_error);
-    ASSERT_STR_EQ("h=4", destination_project.lines[2].committed_source);
-    ASSERT_STR_EQ("a=8", destination_project.lines[2].draft.text);
-    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[2].status);
+                  project_validate_draft(&destination_project, 0)
+                      .validation_error);
+    ASSERT_STR_EQ("h=4", project_line_source(&destination_project, 2));
+    ASSERT_STR_EQ("a=8", project_line_display_text(&destination_project, 2));
+    ASSERT_EQ_INT(EXPRESSION_INVALID,
+                  project_line_status(&destination_project, 2));
     ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
-                  destination_project.lines[2].validation_error);
+                  project_validate_draft(&destination_project, 2)
+                      .validation_error);
     ASSERT_STR_EQ("q(x)=x+1",
-                  destination_project.lines[3].committed_source);
-    ASSERT_STR_EQ("f(t)=t+9", destination_project.lines[3].draft.text);
-    ASSERT_EQ_INT(EXPRESSION_INVALID, destination_project.lines[3].status);
+                  project_line_source(&destination_project, 3));
+    ASSERT_STR_EQ("f(t)=t+9", project_line_display_text(&destination_project, 3));
+    ASSERT_EQ_INT(EXPRESSION_INVALID,
+                  project_line_status(&destination_project, 3));
     ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION,
-                  destination_project.lines[3].validation_error);
+                  project_validate_draft(&destination_project, 3)
+                      .validation_error);
 }
 
 static void test_decoder_fuzz_keeps_destinations_transactional(void) {
@@ -269,9 +286,6 @@ static void test_decoder_fuzz_keeps_destinations_transactional(void) {
     app_state_init(&state_before);
     state_before.view = APP_VIEW_SPLIT;
     state_before.selected_expression = 3;
-    project_init(&project_before);
-    set_and_commit(&project_before, 0, "a=4");
-    project_before.dirty = false;
 
     for (iteration = 0; iteration < 1000; iteration++) {
         size_t length = iteration % sizeof(bytes) + 1;
@@ -280,18 +294,26 @@ static void test_decoder_fuzz_keeps_destinations_transactional(void) {
             bytes[index] = (uint8_t)(random >> 24);
         }
         destination_state = state_before;
-        destination_project = project_before;
+        project_init(&destination_project);
+        set_and_commit(&destination_project, 0, "a=4");
+        destination_project.dirty = false;
         if (!project_decode(&destination_state,
                             &destination_project,
                             bytes,
                             length,
                             &error)) {
-            ASSERT_TRUE(memcmp(&state_before,
-                               &destination_state,
-                               sizeof(state_before)) == 0);
-            ASSERT_TRUE(memcmp(&project_before,
-                               &destination_project,
-                               sizeof(project_before)) == 0);
+            assert_state_equal(&state_before, &destination_state);
+            ASSERT_EQ_INT(1, destination_project.count);
+            ASSERT_FALSE(destination_project.dirty);
+            ASSERT_STR_EQ("a=4", project_line_source(&destination_project, 0));
+            ASSERT_STR_EQ("a=4",
+                          project_line_display_text(&destination_project, 0));
+            ASSERT_EQ_INT(EXPRESSION_VALID,
+                          project_line_status(&destination_project, 0));
+            ASSERT_EQ_INT(EVAL_OK,
+                          project_evaluate_line(&destination_project, 0).error);
+            ASSERT_FLOAT_EQ(4.0f,
+                            project_evaluate_line(&destination_project, 0).value);
         }
     }
 }

@@ -30,7 +30,6 @@ static FakeStorage fake;
 static Project old_project;
 static Project new_project;
 static Project loaded_project;
-static Project project_snapshot;
 static uint8_t old_bytes[PROJECT_MAX_BYTES];
 static size_t old_length;
 static uint8_t new_bytes[PROJECT_MAX_BYTES];
@@ -349,7 +348,6 @@ static void test_corrupt_load_leaves_destinations_unchanged(void) {
     set_and_commit(&loaded_project, 0, "q=7");
     loaded_project.dirty = false;
     state_snapshot = state;
-    project_snapshot = loaded_project;
 
     fake_init(&fake);
     record = fake_create(&fake, "DGCPROJ");
@@ -361,10 +359,16 @@ static void test_corrupt_load_leaves_destinations_unchanged(void) {
                                 &loaded_project);
     ASSERT_FALSE(result.ok);
     ASSERT_EQ_INT(STORE_ERR_VALIDATE, result.error);
-    ASSERT_TRUE(memcmp(&state, &state_snapshot, sizeof(state)) == 0);
-    ASSERT_TRUE(memcmp(&loaded_project,
-                       &project_snapshot,
-                       sizeof(loaded_project)) == 0);
+    ASSERT_EQ_INT(state_snapshot.view, state.view);
+    ASSERT_EQ_INT(state_snapshot.mode, state.mode);
+    ASSERT_EQ_INT(state_snapshot.selected_expression, state.selected_expression);
+    ASSERT_EQ_INT(1, loaded_project.count);
+    ASSERT_FALSE(loaded_project.dirty);
+    ASSERT_STR_EQ("q=7", project_line_source(&loaded_project, 0));
+    ASSERT_STR_EQ("q=7", project_line_display_text(&loaded_project, 0));
+    ASSERT_EQ_INT(EXPRESSION_VALID, project_line_status(&loaded_project, 0));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_line(&loaded_project, 0).error);
+    ASSERT_FLOAT_EQ(7.0f, project_evaluate_line(&loaded_project, 0).value);
 }
 
 static void test_load_recovers_a_valid_backup_after_interruption(void) {

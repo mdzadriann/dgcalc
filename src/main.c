@@ -13,9 +13,6 @@
 static AppState app_state;
 static Project project;
 static StorageBackend storage;
-static ExpressionLine edit_backup;
-static uint8_t count_before_edit;
-static bool dirty_before_edit;
 
 typedef enum {
     CONFIRM_CANCEL,
@@ -79,28 +76,7 @@ static ConfirmResult confirm_data_loss(const char *operation) {
     return quit_requested ? CONFIRM_QUIT : CONFIRM_CANCEL;
 }
 
-static void begin_edit(bool *editing) {
-    uint8_t index = app_state.selected_expression;
-
-    edit_backup = project.lines[index];
-    count_before_edit = project.count;
-    dirty_before_edit = project.dirty;
-    if (index >= project.count) {
-        project.count = (uint8_t)(index + 1);
-    }
-    *editing = true;
-}
-
-static void cancel_edit(bool *editing) {
-    uint8_t index = app_state.selected_expression;
-
-    project.lines[index] = edit_backup;
-    project.count = count_before_edit;
-    project.dirty = dirty_before_edit;
-    *editing = false;
-}
-
-static void handle_action(AppAction action, bool *editing, bool *running) {
+static void handle_action(AppAction action, bool *running) {
     uint8_t index = app_state.selected_expression;
 
     switch (action) {
@@ -120,19 +96,16 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
             }
             break;
         case APP_ACTION_BEGIN_EDIT:
-            if (!*editing) {
-                begin_edit(editing);
-            }
+            (void)project_begin_edit(&project, index);
             break;
         case APP_ACTION_COMMIT_EDIT:
-            if (*editing && project_commit_line(&project, index).ok) {
-                *editing = false;
+            if (project_is_editing(&project)) {
+                (void)project_commit_line(&project,
+                                          project_editing_index(&project));
             }
             break;
         case APP_ACTION_CANCEL_EDIT:
-            if (*editing) {
-                cancel_edit(editing);
-            }
+            project_cancel_edit(&project);
             break;
         case APP_ACTION_CLEAR_EXPRESSION:
             (void)project_clear_line(&project, index);
@@ -141,7 +114,7 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
             bool quit_requested;
             (void)save_project(true, &quit_requested);
             if (quit_requested) {
-                handle_action(APP_ACTION_QUIT, editing, running);
+                handle_action(APP_ACTION_QUIT, running);
             }
             break;
         }
@@ -149,7 +122,7 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
             ConfirmResult confirmation =
                 confirm_data_loss("Load saved project?");
             if (confirmation == CONFIRM_QUIT) {
-                handle_action(APP_ACTION_QUIT, editing, running);
+                handle_action(APP_ACTION_QUIT, running);
             } else if (confirmation == CONFIRM_PROCEED) {
                 StoreResult result = project_store_load(&storage,
                                                         PROJECT_NAME,
@@ -158,10 +131,8 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
                 if (!result.ok) {
                     if (ce_ui_show_message(storage_error_message(result.error)) ==
                         APP_ACTION_QUIT) {
-                        handle_action(APP_ACTION_QUIT, editing, running);
+                        handle_action(APP_ACTION_QUIT, running);
                     }
-                } else {
-                    *editing = false;
                 }
             }
             break;
@@ -170,11 +141,10 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
             ConfirmResult confirmation =
                 confirm_data_loss("Start new project?");
             if (confirmation == CONFIRM_QUIT) {
-                handle_action(APP_ACTION_QUIT, editing, running);
+                handle_action(APP_ACTION_QUIT, running);
             } else if (confirmation == CONFIRM_PROCEED) {
                 app_state_init(&app_state);
                 project_init(&project);
-                *editing = false;
             }
             break;
         }
@@ -183,7 +153,7 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
             project.dirty = true;
             break;
         case APP_ACTION_OPEN_MENU:
-            handle_action(ce_ui_show_menu(), editing, running);
+            handle_action(ce_ui_show_menu(), running);
             break;
         case APP_ACTION_QUIT: {
             ConfirmResult confirmation;
@@ -202,7 +172,6 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
 
 int main(void) {
     bool running = true;
-    bool editing = false;
     bool redraw = true;
 
     app_state_init(&app_state);
@@ -212,27 +181,27 @@ int main(void) {
     storage = ce_appvar_backend();
 
     while (running) {
-        EditorBuffer *editor =
-            &project.lines[app_state.selected_expression].draft;
+        EditorBuffer *editor = project_editor(&project);
         uint16_t length_before;
         uint16_t cursor_before;
         AppAction action;
 
         if (redraw) {
-            ce_ui_draw(&app_state, &project, editing);
+            ce_ui_draw(&app_state, &project, project_is_editing(&project));
             redraw = false;
         }
-        length_before = editor->length;
-        cursor_before = editor->cursor;
-        action = ce_input_poll(editor, editing);
-        if (editor->length != length_before || editor->cursor != cursor_before) {
+        length_before = editor != NULL ? editor->length : 0;
+        cursor_before = editor != NULL ? editor->cursor : 0;
+        action = ce_input_poll(editor, project_is_editing(&project));
+        if (editor != NULL &&
+            (editor->length != length_before || editor->cursor != cursor_before)) {
             redraw = true;
         }
-        if (editor->length != length_before) {
+        if (editor != NULL && editor->length != length_before) {
             project.dirty = true;
         }
         if (action != APP_ACTION_NONE) {
-            handle_action(action, &editing, &running);
+            handle_action(action, &running);
             redraw = true;
         }
     }

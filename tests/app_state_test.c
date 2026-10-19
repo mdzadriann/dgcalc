@@ -54,8 +54,8 @@ static void test_view_and_mode_actions_do_not_touch_invalid_drafts(void) {
     app_handle_action(&state, APP_ACTION_SHOW_GRAPH);
     app_handle_action(&state, APP_ACTION_SHOW_EXPRESSIONS);
     app_handle_action(&state, APP_ACTION_TOGGLE_GRAPH_MODE);
-    ASSERT_STR_EQ("x^2+", project.lines[0].draft.text);
-    ASSERT_EQ_INT(EXPRESSION_INVALID, project.lines[0].status);
+    ASSERT_STR_EQ("x^2+", project_line_display_text(&project, 0));
+    ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 0));
 }
 
 void run_app_state_tests(void) {

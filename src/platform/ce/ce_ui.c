@@ -120,7 +120,9 @@ static void draw_expression_list(const AppState *state,
     gfx_FillRectangle_NoClip(0, 24, width, 196);
     for (row = 0; row < visible; row++) {
         uint8_t index = (uint8_t)(start + row);
-        const ExpressionLine *line;
+        const char *text = project_line_display_text(project, index);
+        uint16_t cursor = project_editor_cursor(project);
+        bool active = editing && index == project_editing_index(project);
         int y = 30 + row * 23;
         const char *error;
         uint8_t characters;
@@ -129,8 +131,7 @@ static void draw_expression_list(const AppState *state,
         if (index >= PROJECT_MAX_EXPRESSIONS) {
             break;
         }
-        line = &project->lines[index];
-        error = status_name(line->status);
+        error = status_name(project_line_status(project, index));
         if (index == state->selected_expression) {
             gfx_SetColor(COLOR_BLUE);
             gfx_Rectangle_NoClip(2, y - 3, width - 5, 21);
@@ -141,21 +142,20 @@ static void draw_expression_list(const AppState *state,
         gfx_SetTextFGColor(COLOR_TEXT);
         characters = width > 200 ? (error[0] == '\0' ? 34 : 25)
                                  : (error[0] == '\0' ? 12 : 10);
-        if (editing && index == state->selected_expression &&
-            line->draft.cursor >= characters) {
-            text_start = (uint16_t)(line->draft.cursor - characters + 1);
+        if (active && cursor >= characters) {
+            text_start = (uint16_t)(cursor - characters + 1);
         }
-        print_clipped(&line->draft.text[text_start],
+        print_clipped(&text[text_start],
                       27,
                       y + 2,
                       characters);
-        if (editing && index == state->selected_expression) {
+        if (active) {
             char prefix[41];
             uint16_t prefix_length =
-                (uint16_t)(line->draft.cursor - text_start);
+                (uint16_t)(cursor - text_start);
             int caret_x;
 
-            memcpy(prefix, &line->draft.text[text_start], prefix_length);
+            memcpy(prefix, &text[text_start], prefix_length);
             prefix[prefix_length] = '\0';
             caret_x = 27 + gfx_GetStringWidth(prefix);
             gfx_SetColor(COLOR_BLUE);

@@ -37,8 +37,13 @@ typedef struct {
 typedef struct {
     ExpressionLine lines[PROJECT_MAX_EXPRESSIONS];
     DependencyGraph dependencies;
+    ExpressionLine edit_backup;
     uint8_t count;
     bool dirty;
+    uint8_t count_before_edit;
+    bool dirty_before_edit;
+    bool editing;
+    uint8_t editing_index;
 } Project;
 
 typedef struct {
@@ -49,6 +54,19 @@ typedef struct {
 } CommitResult;
 
 void project_init(Project *project);
+bool project_begin_edit(Project *project, uint8_t index);
+void project_cancel_edit(Project *project);
+bool project_is_editing(const Project *project);
+uint8_t project_editing_index(const Project *project);
+EditorBuffer *project_editor(Project *project);
+uint16_t project_editor_cursor(const Project *project);
+const char *project_line_source(const Project *project, uint8_t index);
+const char *project_line_display_text(const Project *project, uint8_t index);
+bool project_line_has_committed(const Project *project, uint8_t index);
+ExpressionStatus project_line_status(const Project *project, uint8_t index);
+ExprRole project_line_role(const Project *project, uint8_t index);
+bool project_line_tree(const Project *project, uint8_t index,
+                      AstView *tree, AstId *root);
 bool project_set_draft(Project *project, uint8_t index, const char *source);
 bool project_clear_line(Project *project, uint8_t index);
 CommitResult project_validate_draft(Project *project, uint8_t index);
