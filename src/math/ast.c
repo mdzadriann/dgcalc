@@ -42,6 +42,11 @@ AstId ast_arena_append(AstArena *arena, AstNode node) {
     return id;
 }
 
+AstView ast_arena_view(const AstArena *arena) {
+    AstView tree = {arena->nodes, arena->count};
+    return tree;
+}
+
 bool ast_name_from_text(const char *text, size_t length, uint8_t *name) {
     size_t index;
 

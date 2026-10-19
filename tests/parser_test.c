@@ -3,8 +3,8 @@
 
 #include <stddef.h>
 
-static float eval_literal_node(const AstArena *arena, AstId id) {
-    const AstNode *node = &arena->nodes[id];
+static float eval_literal_node(AstView tree, AstId id) {
+    const AstNode *node = &tree.nodes[id];
     float left;
     float right;
 
@@ -12,11 +12,11 @@ static float eval_literal_node(const AstArena *arena, AstId id) {
         case AST_NUMBER:
             return node->number;
         case AST_UNARY:
-            left = eval_literal_node(arena, node->left);
+            left = eval_literal_node(tree, node->left);
             return node->op == AST_OP_NEG ? -left : left;
         case AST_BINARY:
-            left = eval_literal_node(arena, node->left);
-            right = eval_literal_node(arena, node->right);
+            left = eval_literal_node(tree, node->left);
+            right = eval_literal_node(tree, node->right);
             switch ((AstOp)node->op) {
                 case AST_OP_ADD:
                     return left + right;
@@ -39,7 +39,7 @@ static float test_parse_and_eval_literal(const char *source) {
     ParseResult result = parser_parse(source, &arena);
 
     ASSERT_TRUE(result.ok);
-    return result.ok ? eval_literal_node(&arena, result.root) : 0.0f;
+    return result.ok ? eval_literal_node(ast_arena_view(&arena), result.root) : 0.0f;
 }
 
 static AstKind root_kind(const char *source) {

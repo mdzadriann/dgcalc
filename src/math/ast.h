@@ -63,8 +63,14 @@ typedef struct {
     uint16_t count;
 } AstArena;
 
+typedef struct {
+    const AstNode *nodes;
+    uint16_t count;
+} AstView;
+
 void ast_arena_init(AstArena *arena);
 AstId ast_arena_append(AstArena *arena, AstNode node);
+AstView ast_arena_view(const AstArena *arena);
 bool ast_name_from_text(const char *text, size_t length, uint8_t *name);
 const char *ast_name_text(uint8_t name);
 

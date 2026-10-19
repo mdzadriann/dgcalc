@@ -24,7 +24,7 @@ typedef struct {
     uint32_t cycles;
 } DependencyGraph;
 
-DependencyScan dependency_scan(const AstArena *arena,
+DependencyScan dependency_scan(AstView tree,
                                AstId root,
                                uint8_t local_parameter,
                                DependencyLookupFn lookup,

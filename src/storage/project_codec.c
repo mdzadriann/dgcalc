@@ -168,7 +168,7 @@ static bool validate_source(const uint8_t *data,
     if (!parsed.ok) {
         return false;
     }
-    validated = expression_validate(&validation_arena, parsed.root);
+    validated = expression_validate(ast_arena_view(&validation_arena), parsed.root);
     if (!validated.ok) {
         return false;
     }

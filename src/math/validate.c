@@ -1,7 +1,7 @@
 #include "math/validate.h"
 
-static bool valid_id(const AstArena *arena, AstId id) {
-    return id != AST_NONE && id < arena->count;
+static bool valid_id(AstView tree, AstId id) {
+    return tree.nodes != NULL && id != AST_NONE && id < tree.count;
 }
 
 static uint8_t symbol_variable_mask(uint8_t name) {
@@ -17,22 +17,22 @@ static uint8_t symbol_variable_mask(uint8_t name) {
     return 0;
 }
 
-static uint8_t node_variable_mask(const AstArena *arena, AstId id) {
+static uint8_t node_variable_mask(AstView tree, AstId id) {
     const AstNode *node;
 
-    if (!valid_id(arena, id)) {
+    if (!valid_id(tree, id)) {
         return 0;
     }
-    node = &arena->nodes[id];
+    node = &tree.nodes[id];
     if (node->kind == AST_SYMBOL) {
         return symbol_variable_mask(node->name);
     }
-    return (uint8_t)(node_variable_mask(arena, node->left) |
-                     node_variable_mask(arena, node->right));
+    return (uint8_t)(node_variable_mask(tree, node->left) |
+                     node_variable_mask(tree, node->right));
 }
 
-uint8_t expression_variable_mask(const AstArena *arena, AstId root) {
-    return node_variable_mask(arena, root);
+uint8_t expression_variable_mask(AstView tree, AstId root) {
+    return node_variable_mask(tree, root);
 }
 
 static bool is_reserved_name(uint8_t name) {
@@ -49,24 +49,24 @@ static ValidationResult invalid_result(ValidationErrorCode error, AstId node) {
     return result;
 }
 
-ValidationResult expression_validate(const AstArena *arena, AstId root) {
+ValidationResult expression_validate(AstView tree, AstId root) {
     const AstNode *node;
     const AstNode *left;
     uint8_t variables;
 
-    if (!valid_id(arena, root)) {
+    if (!valid_id(tree, root)) {
         return invalid_result(VALIDATION_ERR_SHAPE, root);
     }
 
-    node = &arena->nodes[root];
+    node = &tree.nodes[root];
     if (node->kind != AST_RELATION) {
         return valid_result(EXPR_ROLE_SCALAR);
     }
-    if (!valid_id(arena, node->left) || !valid_id(arena, node->right)) {
+    if (!valid_id(tree, node->left) || !valid_id(tree, node->right)) {
         return invalid_result(VALIDATION_ERR_SHAPE, root);
     }
 
-    left = &arena->nodes[node->left];
+    left = &tree.nodes[node->left];
     if (node->op == AST_OP_EQ && left->kind == AST_SYMBOL &&
         symbol_variable_mask(left->name) == 0) {
         if (is_reserved_name(left->name)) {
@@ -78,15 +78,15 @@ ValidationResult expression_validate(const AstArena *arena, AstId root) {
     if (node->op == AST_OP_EQ && left->kind == AST_CALL) {
         if (is_reserved_name(left->name) ||
             symbol_variable_mask(left->name) != 0 ||
-            !valid_id(arena, left->left) ||
-            arena->nodes[left->left].kind != AST_SYMBOL ||
-            is_reserved_name(arena->nodes[left->left].name)) {
+            !valid_id(tree, left->left) ||
+            tree.nodes[left->left].kind != AST_SYMBOL ||
+            is_reserved_name(tree.nodes[left->left].name)) {
             return invalid_result(VALIDATION_ERR_DEFINITION, node->left);
         }
         return valid_result(EXPR_ROLE_FUNCTION_DEFINITION);
     }
 
-    variables = expression_variable_mask(arena, root);
+    variables = expression_variable_mask(tree, root);
     if (variables == 0) {
         return invalid_result(VALIDATION_ERR_VARIABLES, root);
     }

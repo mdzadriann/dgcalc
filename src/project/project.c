@@ -96,7 +96,7 @@ static void rebuild_dependencies(Project *project) {
         if (line->role == EXPR_ROLE_FUNCTION_DEFINITION) {
             local = function_parameter(line);
         }
-        scan = dependency_scan(&line->arena,
+        scan = dependency_scan(ast_arena_view(&line->arena),
                                expression_body(line),
                                local,
                                dependency_lookup,
@@ -229,7 +229,7 @@ static CommitResult validate_draft(Project *project,
         return failed_commit(parsed->code, VALIDATION_OK, parsed->offset);
     }
 
-    *validated = expression_validate(&parse_scratch, parsed->root);
+    *validated = expression_validate(ast_arena_view(&parse_scratch), parsed->root);
     if (!validated->ok) {
         line->status = EXPRESSION_INVALID;
         line->parse_error = PARSE_OK;
@@ -377,7 +377,8 @@ static EvalError resolve_call(void *user,
     state->locals[state->local_count].name = function_parameter(line);
     state->locals[state->local_count].value = argument;
     state->local_count++;
-    result = expression_eval(&line->arena, expression_body(line), &context);
+    result = expression_eval(ast_arena_view(&line->arena),
+                             expression_body(line), &context);
     state->local_count--;
     state->visiting &= ~(UINT32_C(1) << index);
     if (result.error == EVAL_OK) {
@@ -412,7 +413,8 @@ static EvalResult evaluate_line(ProjectEvalState *state, uint8_t index) {
     }
 
     state->visiting |= UINT32_C(1) << index;
-    result = expression_eval(&line->arena, expression_body(line), &context);
+    result = expression_eval(ast_arena_view(&line->arena),
+                             expression_body(line), &context);
     state->visiting &= ~(UINT32_C(1) << index);
     return result;
 }

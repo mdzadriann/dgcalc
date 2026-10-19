@@ -31,7 +31,7 @@ typedef struct {
     EvalError error;
 } EvalResult;
 
-EvalResult expression_eval(const AstArena *arena,
+EvalResult expression_eval(AstView tree,
                            AstId root,
                            const EvalContext *context);
 

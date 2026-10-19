@@ -4,7 +4,7 @@
 #include <string.h>
 
 typedef struct {
-    const AstArena *arena;
+    AstView tree;
     uint8_t local_parameter;
     DependencyLookupFn lookup;
     void *user;
@@ -33,10 +33,10 @@ static void scan_name(ScanState *state, uint8_t name, bool function_call) {
 static void scan_node(ScanState *state, AstId id) {
     const AstNode *node;
 
-    if (id == AST_NONE || id >= state->arena->count) {
+    if (state->tree.nodes == NULL || id == AST_NONE || id >= state->tree.count) {
         return;
     }
-    node = &state->arena->nodes[id];
+    node = &state->tree.nodes[id];
     if (node->kind == AST_SYMBOL) {
         scan_name(state, node->name, false);
         return;
@@ -50,12 +50,12 @@ static void scan_node(ScanState *state, AstId id) {
     scan_node(state, node->right);
 }
 
-DependencyScan dependency_scan(const AstArena *arena,
+DependencyScan dependency_scan(AstView tree,
                                AstId root,
                                uint8_t local_parameter,
                                DependencyLookupFn lookup,
                                void *user) {
-    ScanState state = {arena, local_parameter, lookup, user, {0, false}};
+    ScanState state = {tree, local_parameter, lookup, user, {0, false}};
     scan_node(&state, root);
     return state.result;
 }

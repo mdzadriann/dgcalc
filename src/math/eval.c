@@ -13,7 +13,7 @@ static EvalResult finite_result(float value) {
                            : make_result(0.0f, EVAL_ERR_NONFINITE);
 }
 
-static EvalResult eval_node(const AstArena *arena,
+static EvalResult eval_node(AstView tree,
                             AstId id,
                             const EvalContext *context);
 
@@ -102,17 +102,17 @@ static EvalResult eval_call(uint8_t name,
     return finite_result(value);
 }
 
-static EvalResult eval_binary(const AstArena *arena,
+static EvalResult eval_binary(AstView tree,
                               const AstNode *node,
                               const EvalContext *context) {
-    EvalResult left = eval_node(arena, node->left, context);
+    EvalResult left = eval_node(tree, node->left, context);
     EvalResult right;
     float value;
 
     if (left.error != EVAL_OK) {
         return left;
     }
-    right = eval_node(arena, node->right, context);
+    right = eval_node(tree, node->right, context);
     if (right.error != EVAL_OK) {
         return right;
     }
@@ -145,41 +145,41 @@ static EvalResult eval_binary(const AstArena *arena,
     return finite_result(value);
 }
 
-static EvalResult eval_node(const AstArena *arena,
+static EvalResult eval_node(AstView tree,
                             AstId id,
                             const EvalContext *context) {
     const AstNode *node;
     EvalResult value;
 
-    if (id == AST_NONE || id >= arena->count) {
+    if (tree.nodes == NULL || id == AST_NONE || id >= tree.count) {
         return make_result(0.0f, EVAL_ERR_UNDEFINED);
     }
-    node = &arena->nodes[id];
+    node = &tree.nodes[id];
     switch ((AstKind)node->kind) {
         case AST_NUMBER:
             return finite_result(node->number);
         case AST_SYMBOL:
             return eval_symbol(node->name, context);
         case AST_UNARY:
-            value = eval_node(arena, node->left, context);
+            value = eval_node(tree, node->left, context);
             if (value.error == EVAL_OK && node->op == AST_OP_NEG) {
                 value.value = -value.value;
             }
             return value;
         case AST_BINARY:
-            return eval_binary(arena, node, context);
+            return eval_binary(tree, node, context);
         case AST_CALL:
-            value = eval_node(arena, node->left, context);
+            value = eval_node(tree, node->left, context);
             return value.error == EVAL_OK
                        ? eval_call(node->name, value.value, context)
                        : value;
         case AST_RELATION: {
-            EvalResult left = eval_node(arena, node->left, context);
+            EvalResult left = eval_node(tree, node->left, context);
             EvalResult right;
             if (left.error != EVAL_OK) {
                 return left;
             }
-            right = eval_node(arena, node->right, context);
+            right = eval_node(tree, node->right, context);
             return right.error == EVAL_OK
                        ? finite_result(left.value - right.value)
                        : right;
@@ -189,8 +189,8 @@ static EvalResult eval_node(const AstArena *arena,
     }
 }
 
-EvalResult expression_eval(const AstArena *arena,
+EvalResult expression_eval(AstView tree,
                            AstId root,
                            const EvalContext *context) {
-    return eval_node(arena, root, context);
+    return eval_node(tree, root, context);
 }

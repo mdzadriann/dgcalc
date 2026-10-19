@@ -29,7 +29,7 @@ typedef struct {
     AstId error_node;
 } ValidationResult;
 
-ValidationResult expression_validate(const AstArena *arena, AstId root);
-uint8_t expression_variable_mask(const AstArena *arena, AstId root);
+ValidationResult expression_validate(AstView tree, AstId root);
+uint8_t expression_variable_mask(AstView tree, AstId root);
 
 #endif
