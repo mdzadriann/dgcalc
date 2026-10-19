@@ -207,8 +207,8 @@ void ce_ui_begin(void) {
     configure_palette();
     gfx_SetTextScale(1, 1);
     gfx_SetTextFGColor(COLOR_TEXT);
-    gfx_SetTextBGColor(COLOR_PANEL);
-    gfx_SetTextTransparentColor(COLOR_PANEL);
+    gfx_SetTextBGColor(255);
+    gfx_SetTextTransparentColor(255);
 }
 
 void ce_ui_draw(const AppState *state,
@@ -242,6 +242,7 @@ static void wait_for_release(void) {
     do {
         kb_Scan();
     } while (any_key_down());
+    kb_SetMode(MODE_3_CONTINUOUS);
 }
 
 static kb_lkey_t wait_for_key(void) {

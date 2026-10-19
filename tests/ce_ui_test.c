@@ -9,6 +9,7 @@
 
 uint16_t fake_gfx_palette[256];
 uint8_t kb_Data[8];
+uint8_t fake_kb_mode;
 
 typedef struct {
     char text[16];
@@ -31,6 +32,7 @@ static int buffer_blits;
 static int swaps;
 static uint8_t draw_color;
 static uint8_t text_color;
+static uint8_t transparent_text_color;
 static bool dialog_draw_pending;
 static TestDrawOperation draw_operations[32];
 static size_t draw_operation_count;
@@ -57,6 +59,8 @@ static void reset_fake_hardware(void) {
     swaps = 0;
     draw_color = 0;
     text_color = 0;
+    transparent_text_color = 0;
+    fake_kb_mode = MODE_3_CONTINUOUS;
     dialog_draw_pending = false;
     draw_operation_count = 0;
     footer_print_count = 0;
@@ -79,7 +83,10 @@ void kb_Scan(void) {
     if (key != 0) {
         kb_Data[key >> 8] = (uint8_t)key;
     }
+    fake_kb_mode = MODE_0_IDLE;
 }
+
+void fake_kb_set_mode(uint8_t mode) { fake_kb_mode = mode; }
 
 uint16_t gfx_RGBTo1555(uint8_t red, uint8_t green, uint8_t blue) {
     return (uint16_t)(red + green + blue);
@@ -94,7 +101,9 @@ void gfx_SetTextScale(uint8_t width, uint8_t height) {
 }
 void gfx_SetTextFGColor(uint8_t color) { text_color = color; }
 void gfx_SetTextBGColor(uint8_t color) { (void)color; }
-void gfx_SetTextTransparentColor(uint8_t color) { (void)color; }
+void gfx_SetTextTransparentColor(uint8_t color) {
+    transparent_text_color = color;
+}
 void gfx_SetColor(uint8_t color) { draw_color = color; }
 void gfx_FillScreen(uint8_t color) { (void)color; }
 void gfx_FillRectangle_NoClip(int x, int y, int width, int height) {
@@ -203,6 +212,7 @@ static void test_every_menu_selection_preserves_normal_draw_buffer_roles(void) {
         ASSERT_EQ_INT(selection + 1, screen_blits);
         ASSERT_EQ_INT(selection + 1, buffer_blits);
         ASSERT_EQ_INT(0, swaps);
+        ASSERT_EQ_INT(MODE_3_CONTINUOUS, kb_GetMode());
         ASSERT_EQ_INT((selection + 1) * 3, draw_operation_count);
         for (frame = 0; frame <= selection; frame++) {
             ASSERT_EQ_INT(TEST_COPY_SCREEN_TO_BUFFER,
@@ -258,6 +268,7 @@ static void test_footer_highlights_the_active_page(void) {
 
     for (view_index = 0; view_index < 3; view_index++) {
         reset_fake_hardware();
+        ce_ui_begin();
         app_state_init(&state);
         state.view = views[view_index];
         project_init(&project);
@@ -271,6 +282,8 @@ static void test_footer_highlights_the_active_page(void) {
             if (label == expected_label[view_index]) {
                 ASSERT_TRUE(footer_prints[label].color !=
                             footer_prints[(label + 1) % 5].color);
+                ASSERT_TRUE(footer_prints[label].color !=
+                            transparent_text_color);
             }
         }
     }
