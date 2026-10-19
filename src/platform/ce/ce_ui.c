@@ -78,7 +78,7 @@ static void draw_key_bar(void) {
     gfx_SetColor(COLOR_GRID);
     gfx_HorizLine_NoClip(0, 220, 320);
     gfx_SetTextFGColor(COLOR_MUTED);
-    gfx_PrintStringXY("Y= Expr   MODE Split   GRAPH Graph   PRGM Menu", 5, 227);
+    gfx_PrintStringXY("Y=Expr WINDOW=Split ZOOM=Mode TRACE=Menu GRAPH", 5, 227);
 }
 
 static void draw_expression_list(const AppState *state,
@@ -224,11 +224,21 @@ static kb_lkey_t wait_for_key(void) {
         kb_KeyUp, kb_KeyDown, kb_KeyLeft, kb_KeyRight,
         kb_KeyEnter, kb_KeyClear
     };
+    bool second = false;
     size_t index;
 
     wait_for_release();
     for (;;) {
         kb_Scan();
+        if (kb_IsDown(kb_Key2nd)) {
+            wait_for_release();
+            second = true;
+            continue;
+        }
+        if (second && kb_IsDown(kb_KeyMode)) {
+            wait_for_release();
+            return kb_KeyMode;
+        }
         for (index = 0; index < sizeof(accepted) / sizeof(accepted[0]); index++) {
             if (kb_IsDown(accepted[index])) {
                 kb_lkey_t key = accepted[index];
@@ -247,6 +257,7 @@ static void draw_dialog(const char *title,
     int height = 38 + count * 18;
     int top = (240 - height) / 2;
 
+    gfx_BlitScreen();
     gfx_SetColor(COLOR_PANEL);
     gfx_FillRectangle_NoClip(55, top, 210, height);
     gfx_SetColor(COLOR_BLUE);
@@ -290,6 +301,8 @@ AppAction ce_ui_show_menu(void) {
             selected++;
         } else if (key == kb_KeyEnter) {
             return actions[selected];
+        } else if (key == kb_KeyMode) {
+            return APP_ACTION_QUIT;
         } else if (key == kb_KeyClear) {
             return APP_ACTION_NONE;
         }
@@ -312,7 +325,7 @@ CeDirtyChoice ce_ui_confirm_dirty(const char *operation) {
             return selected == 0 ? CE_DIRTY_SAVE
                                  : selected == 1 ? CE_DIRTY_DISCARD
                                                  : CE_DIRTY_CANCEL;
-        } else if (key == kb_KeyClear) {
+        } else if (key == kb_KeyClear || key == kb_KeyMode) {
             return CE_DIRTY_CANCEL;
         }
     }

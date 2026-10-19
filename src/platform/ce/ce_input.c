@@ -143,16 +143,43 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
     if (key == 0) {
         return APP_ACTION_NONE;
     }
+    if (key == kb_Key2nd) {
+        second_latched = !second_latched;
+        alpha_latched = false;
+        return APP_ACTION_NONE;
+    }
+    if (second_latched && key == kb_KeyMode) {
+        second_latched = false;
+        return APP_ACTION_QUIT;
+    }
     if (key == kb_KeyYequ) {
+        alpha_latched = false;
+        second_latched = false;
         return APP_ACTION_SHOW_EXPRESSIONS;
     }
-    if (key == kb_KeyMode) {
+    if (key == kb_KeyWindow) {
+        alpha_latched = false;
+        second_latched = false;
         return APP_ACTION_SHOW_SPLIT;
     }
+    if (key == kb_KeyZoom) {
+        alpha_latched = false;
+        second_latched = false;
+        return APP_ACTION_TOGGLE_GRAPH_MODE;
+    }
+    if (key == kb_KeyTrace) {
+        alpha_latched = false;
+        second_latched = false;
+        return APP_ACTION_OPEN_MENU;
+    }
     if (key == kb_KeyGraph) {
+        alpha_latched = false;
+        second_latched = false;
         return APP_ACTION_SHOW_GRAPH;
     }
     if (!editing) {
+        alpha_latched = false;
+        second_latched = false;
         if (key == kb_KeyUp) {
             return APP_ACTION_MOVE_SELECTION_UP;
         }
@@ -162,11 +189,8 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
         if (key == kb_KeyEnter) {
             return APP_ACTION_BEGIN_EDIT;
         }
-        if (key == kb_KeyPrgm) {
-            return APP_ACTION_OPEN_MENU;
-        }
         if (key == kb_KeyClear) {
-            return APP_ACTION_QUIT;
+            return APP_ACTION_CLEAR_EXPRESSION;
         }
         return APP_ACTION_NONE;
     }
@@ -174,11 +198,6 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
     if (key == kb_KeyAlpha) {
         alpha_latched = !alpha_latched;
         second_latched = false;
-        return APP_ACTION_NONE;
-    }
-    if (key == kb_Key2nd) {
-        second_latched = !second_latched;
-        alpha_latched = false;
         return APP_ACTION_NONE;
     }
     if (alpha_latched) {
@@ -202,7 +221,7 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
         return APP_ACTION_COMMIT_EDIT;
     }
     if (key == kb_KeyClear) {
-        return APP_ACTION_CANCEL_EDIT;
+        return APP_ACTION_CLEAR_EXPRESSION;
     }
     if (key == kb_KeyDel) {
         (void)editor_backspace(active_editor);

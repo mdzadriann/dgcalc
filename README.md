@@ -26,13 +26,14 @@ $env:HOST_CC = 'C:\Users\Adrian\Documents\CHAT GPT PROJECTS\.toolchains\zig-x86_
 
 ## Calculator controls
 
-- `Y=` opens Expressions, `MODE` opens the compact Split view, and `GRAPH` opens Graph.
-- Arrow keys select a line. `ENTER` starts or commits editing; `CLEAR` cancels an edit and quits only when not editing; `DEL` backspaces.
+- `Y=` opens Expressions, `WINDOW` opens the compact Split view, `ZOOM` toggles 2D/3D, `TRACE` opens the project menu, and `GRAPH` opens Graph.
+- Arrow keys select a line. `ENTER` starts or commits editing, `DEL` removes one character, and `CLEAR` erases the entire selected expression. In a menu, `CLEAR` goes back.
+- Press `2nd`, then `MODE` (`QUIT`) to leave DGCALC from any app screen. Unsaved work still requires Save, Discard, or Cancel.
 - Number keys, arithmetic keys, parentheses, comma, `x²`, `^`, `sin`, `cos`, `tan`, `ln`, and `log` insert their displayed math.
 - `X,T,θ,n` inserts `x`. `ALPHA` followed by the calculator’s printed letter keys inserts `a` through `z`; this includes `ALPHA`+`1` for `y` and `ALPHA`+`2` for `z`.
 - `MATH` inserts `=`. `2nd`+`MATH` inserts `<`, `2nd`+`APPS` inserts `>`, `2nd`+`PRGM` inserts `<=`, and `2nd`+`VARS` inserts `>=`.
 - `2nd`+`x²` inserts `sqrt(`; `2nd`+`sin`, `cos`, and `tan` insert `abs(`, `exp(`, and `floor(`.
-- Outside an active edit, `PRGM` opens New, Save, Load, 2D/3D Mode, and Quit. Unsaved New, Load, and Quit operations require Save, Discard, or Cancel.
+- The `TRACE` project menu contains New, Save, Load, 2D/3D Mode, and Quit. Unsaved New, Load, and Quit operations require Save, Discard, or Cancel.
 
 Projects are stored in the archived AppVar `DGCPROJ`. Saves use `DGCTMP` plus `DGCBAK` so a failed write, validation, rename, or archive step can restore the previous project.
 

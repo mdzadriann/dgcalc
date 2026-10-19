@@ -29,6 +29,7 @@ bool app_handle_action(AppState *state, AppAction action) {
         case APP_ACTION_BEGIN_EDIT:
         case APP_ACTION_COMMIT_EDIT:
         case APP_ACTION_CANCEL_EDIT:
+        case APP_ACTION_CLEAR_EXPRESSION:
         case APP_ACTION_NEW_PROJECT:
         case APP_ACTION_SAVE_PROJECT:
         case APP_ACTION_LOAD_PROJECT:

@@ -114,6 +114,9 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
                 cancel_edit(editing);
             }
             break;
+        case APP_ACTION_CLEAR_EXPRESSION:
+            (void)project_clear_line(&project, index);
+            break;
         case APP_ACTION_SAVE_PROJECT:
             (void)save_project(true);
             break;
