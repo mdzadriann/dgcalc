@@ -363,7 +363,9 @@ bool project_decode(AppState *state_destination,
         offset += 2;
         copy_source(source_scratch, &input[offset], draft);
         (void)project_set_draft(project_destination, index, source_scratch);
-        (void)project_validate_draft(project_destination, index);
+        if (committed != 0 || draft != 0) {
+            (void)project_validate_draft(project_destination, index);
+        }
         offset += draft;
     }
 

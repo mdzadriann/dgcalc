@@ -325,16 +325,18 @@ CeDirtyChoice ce_ui_confirm_dirty(const char *operation) {
             return selected == 0 ? CE_DIRTY_SAVE
                                  : selected == 1 ? CE_DIRTY_DISCARD
                                                  : CE_DIRTY_CANCEL;
-        } else if (key == kb_KeyClear || key == kb_KeyMode) {
+        } else if (key == kb_KeyMode) {
+            return CE_DIRTY_QUIT;
+        } else if (key == kb_KeyClear) {
             return CE_DIRTY_CANCEL;
         }
     }
 }
 
-void ce_ui_show_message(const char *message) {
+AppAction ce_ui_show_message(const char *message) {
     static const char *const options[] = {"OK"};
     draw_dialog(message, options, 1, 0);
-    (void)wait_for_key();
+    return wait_for_key() == kb_KeyMode ? APP_ACTION_QUIT : APP_ACTION_NONE;
 }
 
 void ce_ui_end(void) {

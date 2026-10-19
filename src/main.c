@@ -17,6 +17,12 @@ static ExpressionLine edit_backup;
 static uint8_t count_before_edit;
 static bool dirty_before_edit;
 
+typedef enum {
+    CONFIRM_CANCEL,
+    CONFIRM_PROCEED,
+    CONFIRM_QUIT
+} ConfirmResult;
+
 static const char *storage_error_message(StoreError error) {
     switch (error) {
         case STORE_ERR_ENCODE: return "Project is too large";
@@ -30,33 +36,47 @@ static const char *storage_error_message(StoreError error) {
     }
 }
 
-static bool save_project(bool announce) {
+static bool save_project(bool announce, bool *quit_requested) {
     StoreResult result = project_store_atomic(&storage,
                                               PROJECT_NAME,
                                               &app_state,
                                               &project);
+    *quit_requested = false;
     if (!result.ok) {
-        ce_ui_show_message(storage_error_message(result.error));
+        *quit_requested =
+            ce_ui_show_message(storage_error_message(result.error)) ==
+            APP_ACTION_QUIT;
         return false;
     }
     project.dirty = false;
     if (announce) {
-        ce_ui_show_message("Project saved");
+        *quit_requested =
+            ce_ui_show_message("Project saved") == APP_ACTION_QUIT;
     }
     return true;
 }
 
-static bool confirm_data_loss(const char *operation) {
+static ConfirmResult confirm_data_loss(const char *operation) {
     CeDirtyChoice choice;
+    bool quit_requested;
 
     if (!project.dirty) {
-        return true;
+        return CONFIRM_PROCEED;
     }
     choice = ce_ui_confirm_dirty(operation);
-    if (choice == CE_DIRTY_CANCEL) {
-        return false;
+    if (choice == CE_DIRTY_QUIT) {
+        return CONFIRM_QUIT;
     }
-    return choice == CE_DIRTY_DISCARD || save_project(false);
+    if (choice == CE_DIRTY_CANCEL) {
+        return CONFIRM_CANCEL;
+    }
+    if (choice == CE_DIRTY_DISCARD) {
+        return CONFIRM_PROCEED;
+    }
+    if (save_project(false, &quit_requested)) {
+        return CONFIRM_PROCEED;
+    }
+    return quit_requested ? CONFIRM_QUIT : CONFIRM_CANCEL;
 }
 
 static void begin_edit(bool *editing) {
@@ -117,29 +137,47 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
         case APP_ACTION_CLEAR_EXPRESSION:
             (void)project_clear_line(&project, index);
             break;
-        case APP_ACTION_SAVE_PROJECT:
-            (void)save_project(true);
+        case APP_ACTION_SAVE_PROJECT: {
+            bool quit_requested;
+            (void)save_project(true, &quit_requested);
+            if (quit_requested) {
+                handle_action(APP_ACTION_QUIT, editing, running);
+            }
             break;
-        case APP_ACTION_LOAD_PROJECT:
-            if (confirm_data_loss("Load saved project?")) {
+        }
+        case APP_ACTION_LOAD_PROJECT: {
+            ConfirmResult confirmation =
+                confirm_data_loss("Load saved project?");
+            if (confirmation == CONFIRM_QUIT) {
+                handle_action(APP_ACTION_QUIT, editing, running);
+            } else if (confirmation == CONFIRM_PROCEED) {
                 StoreResult result = project_store_load(&storage,
                                                         PROJECT_NAME,
                                                         &app_state,
                                                         &project);
                 if (!result.ok) {
-                    ce_ui_show_message(storage_error_message(result.error));
+                    if (ce_ui_show_message(storage_error_message(result.error)) ==
+                        APP_ACTION_QUIT) {
+                        handle_action(APP_ACTION_QUIT, editing, running);
+                    }
                 } else {
                     *editing = false;
                 }
             }
             break;
-        case APP_ACTION_NEW_PROJECT:
-            if (confirm_data_loss("Start new project?")) {
+        }
+        case APP_ACTION_NEW_PROJECT: {
+            ConfirmResult confirmation =
+                confirm_data_loss("Start new project?");
+            if (confirmation == CONFIRM_QUIT) {
+                handle_action(APP_ACTION_QUIT, editing, running);
+            } else if (confirmation == CONFIRM_PROCEED) {
                 app_state_init(&app_state);
                 project_init(&project);
                 *editing = false;
             }
             break;
+        }
         case APP_ACTION_TOGGLE_GRAPH_MODE:
             (void)app_handle_action(&app_state, action);
             project.dirty = true;
@@ -147,11 +185,16 @@ static void handle_action(AppAction action, bool *editing, bool *running) {
         case APP_ACTION_OPEN_MENU:
             handle_action(ce_ui_show_menu(), editing, running);
             break;
-        case APP_ACTION_QUIT:
-            if (confirm_data_loss("Quit DGCALC?")) {
+        case APP_ACTION_QUIT: {
+            ConfirmResult confirmation;
+            do {
+                confirmation = confirm_data_loss("Quit DGCALC?");
+            } while (confirmation == CONFIRM_QUIT);
+            if (confirmation == CONFIRM_PROCEED) {
                 *running = false;
             }
             break;
+        }
         case APP_ACTION_NONE:
             break;
     }

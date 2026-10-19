@@ -100,6 +100,41 @@ static void test_project_codec_round_trips_an_empty_project(void) {
     ASSERT_FALSE(destination_project.dirty);
 }
 
+static void test_project_codec_round_trips_a_cleared_definition(void) {
+    AppState source_state;
+    AppState destination_state;
+    CodecError error;
+    size_t length;
+
+    app_state_init(&source_state);
+    project_init(&source_project);
+    set_and_commit(&source_project, 0, "a=2");
+    set_and_commit(&source_project, 1, "b=a+3");
+    ASSERT_TRUE(project_clear_line(&source_project, 0));
+    length = project_encode(&source_state,
+                            &source_project,
+                            encoded,
+                            sizeof(encoded),
+                            &error);
+    ASSERT_TRUE(length > 0);
+
+    project_init(&destination_project);
+    ASSERT_TRUE(project_decode(&destination_state,
+                               &destination_project,
+                               encoded,
+                               length,
+                               &error));
+    ASSERT_STR_EQ("", destination_project.lines[0].draft.text);
+    ASSERT_STR_EQ("", destination_project.lines[0].committed_source);
+    ASSERT_FALSE(destination_project.lines[0].has_committed);
+    ASSERT_EQ_INT(EXPRESSION_EMPTY, destination_project.lines[0].status);
+    ASSERT_EQ_INT(EXPRESSION_UNDEFINED,
+                  destination_project.lines[1].status);
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
+                  project_evaluate_line(&destination_project, 1).error);
+    ASSERT_FALSE(destination_project.dirty);
+}
+
 static void assert_rejected_without_mutation(const uint8_t *input,
                                              size_t length,
                                              CodecError expected_error) {
@@ -264,6 +299,7 @@ static void test_decoder_fuzz_keeps_destinations_transactional(void) {
 void run_project_codec_tests(void) {
     test_project_codec_round_trips_committed_and_draft_sources();
     test_project_codec_round_trips_an_empty_project();
+    test_project_codec_round_trips_a_cleared_definition();
     test_project_codec_rejects_corrupt_inputs_transactionally();
     test_project_codec_rejects_duplicate_saved_definitions();
     test_project_codec_restores_duplicate_draft_errors();

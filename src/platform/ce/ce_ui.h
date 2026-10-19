@@ -9,7 +9,8 @@
 typedef enum {
     CE_DIRTY_CANCEL,
     CE_DIRTY_DISCARD,
-    CE_DIRTY_SAVE
+    CE_DIRTY_SAVE,
+    CE_DIRTY_QUIT
 } CeDirtyChoice;
 
 void ce_ui_begin(void);
@@ -18,7 +19,7 @@ void ce_ui_draw(const AppState *state,
                 bool editing);
 AppAction ce_ui_show_menu(void);
 CeDirtyChoice ce_ui_confirm_dirty(const char *operation);
-void ce_ui_show_message(const char *message);
+AppAction ce_ui_show_message(const char *message);
 void ce_ui_end(void);
 
 #endif
