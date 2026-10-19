@@ -21,6 +21,7 @@ void fake_kb_set_mode(uint8_t mode);
 #define kb_GetMode() fake_kb_mode
 
 #define TEST_KEY(group, bit) ((kb_lkey_t)(((group) << 8) | (bit)))
+#define kb_KeyTrace TEST_KEY(1, 1 << 1)
 #define kb_KeyEnter TEST_KEY(6, 1 << 0)
 #define kb_KeyClear TEST_KEY(6, 1 << 6)
 #define kb_KeyDown TEST_KEY(7, 1 << 0)

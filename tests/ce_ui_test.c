@@ -231,6 +231,20 @@ static void test_every_menu_selection_preserves_normal_draw_buffer_roles(void) {
     }
 }
 
+static void test_trace_closes_the_project_menu_without_an_action(void) {
+    static const kb_lkey_t keys[] = {
+        0, kb_KeyTrace, 0,
+        0, kb_KeyClear, 0
+    };
+
+    reset_fake_hardware();
+    script_keys(keys, sizeof(keys) / sizeof(keys[0]));
+
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_ui_show_menu());
+    ASSERT_EQ_INT(3, scan_key_index);
+    ASSERT_EQ_INT(MODE_3_CONTINUOUS, kb_GetMode());
+}
+
 static void test_footer_uses_five_non_overlapping_key_slots(void) {
     static const char *const expected[] = {
         "Expr", "Split", "2D/3D", "Menu", "Graph"
@@ -291,6 +305,7 @@ static void test_footer_highlights_the_active_page(void) {
 
 void run_ce_ui_tests(void) {
     test_every_menu_selection_preserves_normal_draw_buffer_roles();
+    test_trace_closes_the_project_menu_without_an_action();
     test_footer_uses_five_non_overlapping_key_slots();
     test_footer_highlights_the_active_page();
 }

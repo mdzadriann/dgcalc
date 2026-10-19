@@ -245,7 +245,7 @@ static void wait_for_release(void) {
     kb_SetMode(MODE_3_CONTINUOUS);
 }
 
-static kb_lkey_t wait_for_key(void) {
+static kb_lkey_t wait_for_key(bool accept_menu_key) {
     static const kb_lkey_t accepted[] = {
         kb_KeyUp, kb_KeyDown, kb_KeyLeft, kb_KeyRight,
         kb_KeyEnter, kb_KeyClear
@@ -256,6 +256,10 @@ static kb_lkey_t wait_for_key(void) {
     wait_for_release();
     for (;;) {
         kb_Scan();
+        if (accept_menu_key && kb_IsDown(kb_KeyTrace)) {
+            wait_for_release();
+            return kb_KeyTrace;
+        }
         if (kb_IsDown(kb_Key2nd)) {
             wait_for_release();
             second = true;
@@ -320,7 +324,7 @@ AppAction ce_ui_show_menu(void) {
     for (;;) {
         kb_lkey_t key;
         draw_dialog("Project menu", options, 5, selected);
-        key = wait_for_key();
+        key = wait_for_key(true);
         if (key == kb_KeyUp && selected > 0) {
             selected--;
         } else if (key == kb_KeyDown && selected < 4) {
@@ -329,7 +333,7 @@ AppAction ce_ui_show_menu(void) {
             return actions[selected];
         } else if (key == kb_KeyMode) {
             return APP_ACTION_QUIT;
-        } else if (key == kb_KeyClear) {
+        } else if (key == kb_KeyTrace || key == kb_KeyClear) {
             return APP_ACTION_NONE;
         }
     }
@@ -342,7 +346,7 @@ CeDirtyChoice ce_ui_confirm_dirty(const char *operation) {
     for (;;) {
         kb_lkey_t key;
         draw_dialog(operation, options, 3, selected);
-        key = wait_for_key();
+        key = wait_for_key(false);
         if (key == kb_KeyUp && selected > 0) {
             selected--;
         } else if (key == kb_KeyDown && selected < 2) {
@@ -362,7 +366,8 @@ CeDirtyChoice ce_ui_confirm_dirty(const char *operation) {
 AppAction ce_ui_show_message(const char *message) {
     static const char *const options[] = {"OK"};
     draw_dialog(message, options, 1, 0);
-    return wait_for_key() == kb_KeyMode ? APP_ACTION_QUIT : APP_ACTION_NONE;
+    return wait_for_key(false) == kb_KeyMode ? APP_ACTION_QUIT
+                                              : APP_ACTION_NONE;
 }
 
 void ce_ui_end(void) {

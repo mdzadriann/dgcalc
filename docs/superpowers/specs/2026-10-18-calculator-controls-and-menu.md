@@ -9,7 +9,7 @@ Make DGCALC's controls predictable on a TI-84 Plus CE and keep modal menus visua
 - `Y=` opens Expressions.
 - `WINDOW` opens Compact split.
 - `ZOOM` toggles 2D/3D.
-- `TRACE` opens the project menu.
+- `TRACE` opens the project menu and closes it again without choosing an action.
 - `GRAPH` opens Graph.
 - `DEL` removes one character while editing.
 - `CLEAR` removes the entire selected expression with one press. In a modal menu, it goes back.
