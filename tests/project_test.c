@@ -96,10 +96,50 @@ static void test_reserved_names_do_not_alias_single_letter_definitions(void) {
                   project_evaluate_line(&project, 3).error);
 }
 
+static void test_clear_line_removes_definition_and_rebuilds_dependents(void) {
+    Project project;
+
+    project_init(&project);
+    project_set_and_commit(&project, 0, "a=2");
+    project_set_and_commit(&project, 1, "b=a+3");
+    project.dirty = false;
+
+    ASSERT_TRUE(project_clear_line(&project, 0));
+    ASSERT_STR_EQ("", project.lines[0].draft.text);
+    ASSERT_STR_EQ("", project.lines[0].committed_source);
+    ASSERT_FALSE(project.lines[0].has_committed);
+    ASSERT_EQ_INT(EXPRESSION_EMPTY, project.lines[0].status);
+    ASSERT_EQ_INT(EXPRESSION_UNDEFINED, project.lines[1].status);
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
+                  project_evaluate_line(&project, 1).error);
+    ASSERT_TRUE(project.dirty);
+
+    project.dirty = false;
+    ASSERT_FALSE(project_clear_line(&project, 0));
+    ASSERT_FALSE(project.dirty);
+}
+
+static void test_committing_empty_draft_clears_line(void) {
+    Project project;
+    CommitResult result;
+
+    project_init(&project);
+    project_set_and_commit(&project, 0, "x=2");
+    ASSERT_TRUE(project_set_draft(&project, 0, ""));
+
+    result = project_commit_line(&project, 0);
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_FALSE(project.lines[0].has_committed);
+    ASSERT_EQ_INT(EXPRESSION_EMPTY, project.lines[0].status);
+}
+
 void run_project_tests(void) {
     test_definitions_evaluate_and_failed_edits_are_transactional();
     test_undefined_names_and_cycles_are_isolated();
     test_user_functions_bind_their_local_parameter();
     test_duplicate_definitions_are_rejected_transactionally();
     test_reserved_names_do_not_alias_single_letter_definitions();
+    test_clear_line_removes_definition_and_rebuilds_dependents();
+    test_committing_empty_draft_clears_line();
 }

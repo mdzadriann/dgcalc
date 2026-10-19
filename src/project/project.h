@@ -50,6 +50,7 @@ typedef struct {
 
 void project_init(Project *project);
 bool project_set_draft(Project *project, uint8_t index, const char *source);
+bool project_clear_line(Project *project, uint8_t index);
 CommitResult project_validate_draft(Project *project, uint8_t index);
 CommitResult project_commit_line(Project *project, uint8_t index);
 EvalResult project_evaluate_line(Project *project, uint8_t index);

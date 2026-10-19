@@ -181,6 +181,28 @@ bool project_set_draft(Project *project, uint8_t index, const char *source) {
     return true;
 }
 
+bool project_clear_line(Project *project, uint8_t index) {
+    ExpressionLine *line;
+
+    if (index >= project->count) {
+        return false;
+    }
+    line = &project->lines[index];
+    if (line->draft.length == 0 && !line->has_committed &&
+        !line_has_draft_error(line)) {
+        return false;
+    }
+
+    memset(line, 0, sizeof(*line));
+    editor_init(&line->draft);
+    ast_arena_init(&line->arena);
+    line->root = AST_NONE;
+    line->status = EXPRESSION_EMPTY;
+    project->dirty = true;
+    rebuild_dependencies(project);
+    return true;
+}
+
 static CommitResult failed_commit(ParseErrorCode parse_error,
                                   ValidationErrorCode validation_error,
                                   uint16_t offset) {
@@ -246,8 +268,14 @@ CommitResult project_commit_line(Project *project, uint8_t index) {
     ExpressionLine *line;
     ParseResult parsed;
     ValidationResult validated;
-    CommitResult checked =
-        validate_draft(project, index, &parsed, &validated);
+    CommitResult checked;
+
+    if (index < project->count && project->lines[index].draft.length == 0) {
+        CommitResult cleared = {true, PARSE_OK, VALIDATION_OK, 0};
+        (void)project_clear_line(project, index);
+        return cleared;
+    }
+    checked = validate_draft(project, index, &parsed, &validated);
 
     if (!checked.ok) {
         return checked;
