@@ -1,12 +1,28 @@
 #include "project/project.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 static AstArena parse_scratch;
 
+struct ExpressionPayload {
+    size_t bytes;
+    uint16_t node_count;
+    AstNode nodes[];
+};
+
+static AstView line_tree(const ExpressionLine *line) {
+    AstView view = {line->payload->nodes, line->payload->node_count};
+    return view;
+}
+
+static char *payload_source(ExpressionPayload *payload) {
+    return (char *)(payload->nodes + payload->node_count);
+}
+
 static AstId expression_body(const ExpressionLine *line) {
-    const AstNode *root = &line->arena.nodes[line->root];
+    const AstNode *root = &line->payload->nodes[line->root];
 
     if (line->role == EXPR_ROLE_DEFINITION ||
         line->role == EXPR_ROLE_FUNCTION_DEFINITION) {
@@ -16,8 +32,8 @@ static AstId expression_body(const ExpressionLine *line) {
 }
 
 static uint8_t definition_name(const ExpressionLine *line) {
-    const AstNode *root = &line->arena.nodes[line->root];
-    return line->arena.nodes[root->left].name;
+    const AstNode *root = &line->payload->nodes[line->root];
+    return line->payload->nodes[root->left].name;
 }
 
 static bool has_duplicate_definition(const Project *project,
@@ -35,7 +51,7 @@ static bool has_duplicate_definition(const Project *project,
     name = arena->nodes[arena->nodes[root].left].name;
     for (index = 0; index < project->count; index++) {
         const ExpressionLine *line = &project->lines[index];
-        if (index != edited_index && line->has_committed &&
+        if (index != edited_index && line->payload != NULL &&
             line->role == role && definition_name(line) == name) {
             return true;
         }
@@ -52,7 +68,7 @@ static int8_t find_definition(const Project *project,
 
     for (index = 0; index < project->count; index++) {
         const ExpressionLine *line = &project->lines[index];
-        if (line->has_committed && line->role == role &&
+        if (line->payload != NULL && line->role == role &&
             definition_name(line) == name) {
             return (int8_t)index;
         }
@@ -67,9 +83,9 @@ static int8_t dependency_lookup(void *user,
 }
 
 static uint8_t function_parameter(const ExpressionLine *line) {
-    const AstNode *root = &line->arena.nodes[line->root];
-    const AstNode *call = &line->arena.nodes[root->left];
-    return line->arena.nodes[call->left].name;
+    const AstNode *root = &line->payload->nodes[line->root];
+    const AstNode *call = &line->payload->nodes[root->left];
+    return line->payload->nodes[call->left].name;
 }
 
 static bool line_has_draft_error(const ExpressionLine *line) {
@@ -89,14 +105,14 @@ static void rebuild_dependencies(Project *project) {
         DependencyScan scan;
         uint8_t local = DEPENDENCY_NO_LOCAL;
 
-        if (!line->has_committed) {
+        if (line->payload == NULL) {
             computed[index] = EXPRESSION_EMPTY;
             continue;
         }
         if (line->role == EXPR_ROLE_FUNCTION_DEFINITION) {
             local = function_parameter(line);
         }
-        scan = dependency_scan(ast_arena_view(&line->arena),
+        scan = dependency_scan(line_tree(line),
                                expression_body(line),
                                local,
                                dependency_lookup,
@@ -120,7 +136,7 @@ static void rebuild_dependencies(Project *project) {
             uint32_t mask = project->dependencies.dependencies[index];
             uint8_t target;
 
-            if (!project->lines[index].has_committed ||
+            if (project->lines[index].payload == NULL ||
                 computed[index] == EXPRESSION_CYCLE) {
                 continue;
             }
@@ -157,24 +173,67 @@ static void rebuild_dependencies(Project *project) {
 }
 
 void project_init(Project *project) {
+    ProjectMemory memory = {malloc, free};
+    project_init_with_memory(project, memory);
+}
+
+void project_init_with_memory(Project *project, ProjectMemory memory) {
     uint8_t index;
 
     memset(project, 0, sizeof(*project));
     for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
-        editor_init(&project->lines[index].draft);
-        ast_arena_init(&project->lines[index].arena);
         project->lines[index].root = AST_NONE;
         project->lines[index].status = EXPRESSION_EMPTY;
     }
     dependency_graph_clear(&project->dependencies);
+    project->memory = memory;
+    editor_init(&project->editor);
     project->editing_index = PROJECT_MAX_EXPRESSIONS;
 }
 
+void project_dispose(Project *project) {
+    uint8_t index;
+    ProjectMemory memory = project->memory;
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        if (project->lines[index].payload != NULL) {
+            memory.release(project->lines[index].payload);
+        }
+    }
+    project_init_with_memory(project, memory);
+}
+
+size_t project_payload_bytes(const Project *project) {
+    size_t bytes = 0;
+    uint8_t index;
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        if (project->lines[index].payload != NULL) {
+            bytes += project->lines[index].payload->bytes;
+        }
+    }
+    return bytes;
+}
+
+void project_replace(Project *destination, Project *staging) {
+    if (destination == staging) {
+        return;
+    }
+    project_dispose(destination);
+    /* Transfer the whole owner, then empty staging before it can be disposed. */
+    *destination = *staging;
+    project_init_with_memory(staging, destination->memory);
+}
+
 bool project_begin_edit(Project *project, uint8_t index) {
+    const ExpressionLine *line;
     if (index >= PROJECT_MAX_EXPRESSIONS || project->editing) {
         return false;
     }
-    project->edit_backup = project->lines[index];
+    line = &project->lines[index];
+    project->status_before_edit = line->status;
+    project->parse_error_before_edit = line->parse_error;
+    project->validation_error_before_edit = line->validation_error;
+    project->error_offset_before_edit = line->error_offset;
+    (void)editor_set_text(&project->editor, project_line_source(project, index));
     project->count_before_edit = project->count;
     project->dirty_before_edit = project->dirty;
     project->editing_index = index;
@@ -196,39 +255,45 @@ uint8_t project_editing_index(const Project *project) {
 
 EditorBuffer *project_editor(Project *project) {
     return project_is_editing(project)
-               ? &project->lines[project->editing_index].draft : NULL;
+               ? &project->editor : NULL;
 }
 
 uint16_t project_editor_cursor(const Project *project) {
     return project_is_editing(project)
-               ? project->lines[project->editing_index].draft.cursor : 0;
+               ? project->editor.cursor : 0;
 }
 
 void project_cancel_edit(Project *project) {
+    ExpressionLine *line;
     if (!project_is_editing(project)) {
         return;
     }
-    project->lines[project->editing_index] = project->edit_backup;
+    line = &project->lines[project->editing_index];
+    line->status = project->status_before_edit;
+    line->parse_error = project->parse_error_before_edit;
+    line->validation_error = project->validation_error_before_edit;
+    line->error_offset = project->error_offset_before_edit;
     project->count = project->count_before_edit;
     project->dirty = project->dirty_before_edit;
     project->editing = false;
     project->editing_index = PROJECT_MAX_EXPRESSIONS;
+    editor_init(&project->editor);
     rebuild_dependencies(project);
 }
 
 const char *project_line_source(const Project *project, uint8_t index) {
     return project_line_has_committed(project, index)
-               ? project->lines[index].committed_source : "";
+               ? payload_source(project->lines[index].payload) : "";
 }
 
 const char *project_line_display_text(const Project *project, uint8_t index) {
-    return index < project->count && index < PROJECT_MAX_EXPRESSIONS
-               ? project->lines[index].draft.text : "";
+    return project_is_editing(project) && project->editing_index == index
+               ? project->editor.text : project_line_source(project, index);
 }
 
 bool project_line_has_committed(const Project *project, uint8_t index) {
     return index < project->count && index < PROJECT_MAX_EXPRESSIONS &&
-           project->lines[index].has_committed;
+           project->lines[index].payload != NULL;
 }
 
 ExpressionStatus project_line_status(const Project *project, uint8_t index) {
@@ -254,19 +319,27 @@ bool project_line_tree(const Project *project, uint8_t index,
         tree == NULL || root == NULL) {
         return false;
     }
-    *tree = ast_arena_view(&project->lines[index].arena);
+    *tree = line_tree(&project->lines[index]);
     *root = project->lines[index].root;
     return true;
 }
 
 bool project_set_draft(Project *project, uint8_t index, const char *source) {
-    if (index >= PROJECT_MAX_EXPRESSIONS ||
-        !editor_set_text(&project->lines[index].draft, source)) {
+    size_t length = 0;
+    if (index >= PROJECT_MAX_EXPRESSIONS || source == NULL) {
         return false;
     }
-    if (index >= project->count) {
-        project->count = (uint8_t)(index + 1);
+    while (length < EDITOR_CAPACITY && source[length] != '\0') {
+        length++;
     }
+    if (length == EDITOR_CAPACITY) {
+        return false;
+    }
+    if (project_editing_index(project) != index) {
+        project_cancel_edit(project);
+        (void)project_begin_edit(project, index);
+    }
+    (void)editor_set_text(&project->editor, source);
     project->dirty = true;
     return true;
 }
@@ -278,14 +351,21 @@ bool project_clear_line(Project *project, uint8_t index) {
         return false;
     }
     line = &project->lines[index];
-    if (line->draft.length == 0 && !line->has_committed &&
+    if (project_line_display_text(project, index)[0] == '\0' &&
+        line->payload == NULL &&
         !line_has_draft_error(line)) {
         return false;
     }
 
+    if (line->payload != NULL) {
+        project->memory.release(line->payload);
+    }
     memset(line, 0, sizeof(*line));
-    editor_init(&line->draft);
-    ast_arena_init(&line->arena);
+    if (project_editing_index(project) == index) {
+        project->editing = false;
+        project->editing_index = PROJECT_MAX_EXPRESSIONS;
+        editor_init(&project->editor);
+    }
     line->root = AST_NONE;
     line->status = EXPRESSION_EMPTY;
     project->dirty = true;
@@ -296,7 +376,7 @@ bool project_clear_line(Project *project, uint8_t index) {
 static CommitResult failed_commit(ParseErrorCode parse_error,
                                   ValidationErrorCode validation_error,
                                   uint16_t offset) {
-    CommitResult result = {false, parse_error, validation_error, offset};
+    CommitResult result = {false, parse_error, validation_error, offset, false};
     return result;
 }
 
@@ -306,11 +386,11 @@ static CommitResult validate_draft(Project *project,
                                    ValidationResult *validated) {
     ExpressionLine *line;
 
-    if (index >= project->count) {
+    if (index >= project->count || project_editing_index(project) != index) {
         return failed_commit(PARSE_ERR_EXPECTED, VALIDATION_OK, 0);
     }
     line = &project->lines[index];
-    *parsed = parser_parse(line->draft.text, &parse_scratch);
+    *parsed = parser_parse(project->editor.text, &parse_scratch);
     if (!parsed->ok) {
         line->status = EXPRESSION_INVALID;
         line->parse_error = parsed->code;
@@ -343,7 +423,7 @@ static CommitResult validate_draft(Project *project,
     line->error_offset = 0;
 
     {
-        CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0};
+        CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0, false};
         return result;
     }
 }
@@ -356,12 +436,23 @@ CommitResult project_validate_draft(Project *project, uint8_t index) {
 
 CommitResult project_commit_line(Project *project, uint8_t index) {
     ExpressionLine *line;
+    ExpressionPayload *replacement;
+    ExpressionPayload *previous;
+    size_t bytes;
+    size_t text_bytes;
+    ExpressionStatus previous_status;
+    ParseErrorCode previous_parse_error;
+    ValidationErrorCode previous_validation_error;
+    uint16_t previous_error_offset;
     ParseResult parsed;
     ValidationResult validated;
     CommitResult checked;
 
-    if (index < project->count && project->lines[index].draft.length == 0) {
-        CommitResult cleared = {true, PARSE_OK, VALIDATION_OK, 0};
+    if (index >= project->count || project_editing_index(project) != index) {
+        return failed_commit(PARSE_ERR_EXPECTED, VALIDATION_OK, 0);
+    }
+    if (project->editor.length == 0) {
+        CommitResult cleared = {true, PARSE_OK, VALIDATION_OK, 0, false};
         (void)project_clear_line(project, index);
         if (project_editing_index(project) == index) {
             project->editing = false;
@@ -369,33 +460,60 @@ CommitResult project_commit_line(Project *project, uint8_t index) {
         }
         return cleared;
     }
+    line = &project->lines[index];
+    previous_status = line->status;
+    previous_parse_error = line->parse_error;
+    previous_validation_error = line->validation_error;
+    previous_error_offset = line->error_offset;
     checked = validate_draft(project, index, &parsed, &validated);
 
     if (!checked.ok) {
         return checked;
     }
-    line = &project->lines[index];
-
-    memcpy(line->committed_source,
-           line->draft.text,
-           (size_t)line->draft.length + 1);
-    line->arena = parse_scratch;
+    text_bytes = (size_t)project->editor.length + 1;
+    bytes = offsetof(ExpressionPayload, nodes);
+    if (text_bytes > SIZE_MAX - bytes ||
+        parse_scratch.count > (SIZE_MAX - bytes - text_bytes) / sizeof(AstNode)) {
+        replacement = NULL;
+    } else {
+        bytes += (size_t)parse_scratch.count * sizeof(AstNode) + text_bytes;
+        replacement = project->memory.allocate(bytes);
+    }
+    if (replacement == NULL) {
+        line->status = previous_status;
+        line->parse_error = previous_parse_error;
+        line->validation_error = previous_validation_error;
+        line->error_offset = previous_error_offset;
+        checked.ok = false;
+        checked.out_of_memory = true;
+        return checked;
+    }
+    replacement->bytes = bytes;
+    replacement->node_count = parse_scratch.count;
+    memcpy(replacement->nodes, parse_scratch.nodes,
+           (size_t)parse_scratch.count * sizeof(AstNode));
+    memcpy(payload_source(replacement), project->editor.text, text_bytes);
+    previous = line->payload;
+    line->payload = replacement;
     line->root = parsed.root;
     line->role = validated.role;
-    line->has_committed = true;
     line->status = EXPRESSION_VALID;
     line->parse_error = PARSE_OK;
     line->validation_error = VALIDATION_OK;
     line->error_offset = 0;
     project->dirty = true;
     project_mark_dependents_dirty(project, index);
+    if (previous != NULL) {
+        project->memory.release(previous);
+    }
     if (project_editing_index(project) == index) {
         project->editing = false;
         project->editing_index = PROJECT_MAX_EXPRESSIONS;
+        editor_init(&project->editor);
     }
 
     {
-        CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0};
+        CommitResult result = {true, PARSE_OK, VALIDATION_OK, 0, false};
         return result;
     }
 }
@@ -475,7 +593,7 @@ static EvalError resolve_call(void *user,
     state->locals[state->local_count].name = function_parameter(line);
     state->locals[state->local_count].value = argument;
     state->local_count++;
-    result = expression_eval(ast_arena_view(&line->arena),
+    result = expression_eval(line_tree(line),
                              expression_body(line), &context);
     state->local_count--;
     state->visiting &= ~(UINT32_C(1) << index);
@@ -496,7 +614,7 @@ static EvalResult evaluate_line(ProjectEvalState *state, uint8_t index) {
         return result;
     }
     line = &state->project->lines[index];
-    if (!line->has_committed ||
+    if (line->payload == NULL ||
         line->role == EXPR_ROLE_FUNCTION_DEFINITION ||
         line->status == EXPRESSION_UNDEFINED) {
         result.value = 0.0f;
@@ -511,7 +629,7 @@ static EvalResult evaluate_line(ProjectEvalState *state, uint8_t index) {
     }
 
     state->visiting |= UINT32_C(1) << index;
-    result = expression_eval(ast_arena_view(&line->arena),
+    result = expression_eval(line_tree(line),
                              expression_body(line), &context);
     state->visiting &= ~(UINT32_C(1) << index);
     return result;

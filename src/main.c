@@ -28,6 +28,7 @@ static const char *storage_error_message(StoreError error) {
         case STORE_ERR_RENAME: return "Replace failed; old save kept";
         case STORE_ERR_ARCHIVE: return "Archive failed; old save kept";
         case STORE_ERR_READ: return "Project could not be read";
+        case STORE_ERR_MEMORY: return "Memory is insufficient";
         case STORE_OK: return "OK";
         default: return "Storage error";
     }
@@ -100,8 +101,12 @@ static void handle_action(AppAction action, bool *running) {
             break;
         case APP_ACTION_COMMIT_EDIT:
             if (project_is_editing(&project)) {
-                (void)project_commit_line(&project,
-                                          project_editing_index(&project));
+                CommitResult result = project_commit_line(
+                    &project, project_editing_index(&project));
+                if (result.out_of_memory &&
+                    ce_ui_show_message("Memory is insufficient") == APP_ACTION_QUIT) {
+                    handle_action(APP_ACTION_QUIT, running);
+                }
             }
             break;
         case APP_ACTION_CANCEL_EDIT:
@@ -144,7 +149,7 @@ static void handle_action(AppAction action, bool *running) {
                 handle_action(APP_ACTION_QUIT, running);
             } else if (confirmation == CONFIRM_PROCEED) {
                 app_state_init(&app_state);
-                project_init(&project);
+                project_dispose(&project);
             }
             break;
         }
@@ -208,5 +213,6 @@ int main(void) {
 
     ce_input_end();
     ce_ui_end();
+    project_dispose(&project);
     return 0;
 }

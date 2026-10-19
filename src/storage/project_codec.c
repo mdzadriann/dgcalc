@@ -325,6 +325,7 @@ bool project_decode(AppState *state_destination,
                     size_t length,
                     CodecError *error) {
     CodecMetadata metadata;
+    Project staging;
     size_t offset;
     uint8_t index;
 
@@ -333,16 +334,23 @@ bool project_decode(AppState *state_destination,
         return false;
     }
 
-    project_init(project_destination);
+    project_init_with_memory(&staging, project_destination->memory);
     offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
     for (index = 0; index < metadata.count; index++) {
         uint16_t committed = read_u16(&input[offset]);
         uint16_t draft;
         offset += 2;
         if (committed != 0) {
+            CommitResult result;
             copy_source(source_scratch, &input[offset], committed);
-            (void)project_set_draft(project_destination, index, source_scratch);
-            (void)project_commit_line(project_destination, index);
+            (void)project_set_draft(&staging, index, source_scratch);
+            result = project_commit_line(&staging, index);
+            if (!result.ok) {
+                project_dispose(&staging);
+                set_error(error, result.out_of_memory ? CODEC_ERR_MEMORY
+                                                     : CODEC_ERR_CONTENT);
+                return false;
+            }
         }
         offset += committed;
         draft = read_u16(&input[offset]);
@@ -350,6 +358,8 @@ bool project_decode(AppState *state_destination,
         offset += draft;
     }
 
+    staging.count = metadata.count;
+    staging.dirty = false;
     offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
     for (index = 0; index < metadata.count; index++) {
         uint16_t committed = read_u16(&input[offset]);
@@ -357,16 +367,20 @@ bool project_decode(AppState *state_destination,
         offset += 2 + committed;
         draft = read_u16(&input[offset]);
         offset += 2;
-        copy_source(source_scratch, &input[offset], draft);
-        (void)project_set_draft(project_destination, index, source_scratch);
-        if (committed != 0 || draft != 0) {
-            (void)project_validate_draft(project_destination, index);
+        /* Legacy inactive drafts cannot coexist in the single shared editor. */
+        if (index == metadata.selected) {
+            copy_source(source_scratch, &input[offset], draft);
+            if (strcmp(source_scratch, project_line_source(&staging, index)) != 0) {
+                (void)project_set_draft(&staging, index, source_scratch);
+                (void)project_validate_draft(&staging, index);
+            }
         }
         offset += draft;
     }
 
-    project_destination->count = metadata.count;
-    project_destination->dirty = false;
+    staging.count = metadata.count;
+    staging.dirty = false;
+    project_replace(project_destination, &staging);
     state_destination->mode = (GraphMode)metadata.mode;
     state_destination->view = (AppView)metadata.view;
     state_destination->selected_expression = metadata.selected;

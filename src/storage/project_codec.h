@@ -20,7 +20,8 @@ typedef enum {
     CODEC_ERR_VERSION,
     CODEC_ERR_LENGTH,
     CODEC_ERR_CRC,
-    CODEC_ERR_CONTENT
+    CODEC_ERR_CONTENT,
+    CODEC_ERR_MEMORY
 } CodecError;
 
 size_t project_encode(const AppState *state,

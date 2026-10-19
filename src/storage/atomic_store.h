@@ -31,7 +31,8 @@ typedef enum {
     STORE_ERR_VALIDATE,
     STORE_ERR_RENAME,
     STORE_ERR_ARCHIVE,
-    STORE_ERR_READ
+    STORE_ERR_READ,
+    STORE_ERR_MEMORY
 } StoreError;
 
 typedef struct {

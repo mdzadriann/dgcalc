@@ -56,6 +56,7 @@ static void test_view_and_mode_actions_do_not_touch_invalid_drafts(void) {
     app_handle_action(&state, APP_ACTION_TOGGLE_GRAPH_MODE);
     ASSERT_STR_EQ("x^2+", project_line_display_text(&project, 0));
     ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 0));
+    project_dispose(&project);
 }
 
 void run_app_state_tests(void) {

@@ -1,5 +1,6 @@
 #include "storage/atomic_store.h"
 #include "test.h"
+#include "project_memory.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -199,7 +200,7 @@ static void prepare_projects(AppState *old_state, AppState *new_state) {
     CodecError error;
 
     app_state_init(old_state);
-    project_init(&old_project);
+    project_dispose(&old_project);
     set_and_commit(&old_project, 0, "a=2");
     old_length = project_encode(old_state,
                                 &old_project,
@@ -211,7 +212,7 @@ static void prepare_projects(AppState *old_state, AppState *new_state) {
     app_state_init(new_state);
     new_state->view = APP_VIEW_GRAPH;
     new_state->mode = GRAPH_MODE_3D;
-    project_init(&new_project);
+    project_dispose(&new_project);
     set_and_commit(&new_project, 0, "a=9");
     set_and_commit(&new_project, 1, "b=a+1");
     new_length = project_encode(new_state,
@@ -325,7 +326,7 @@ static void test_success_leaves_only_an_archived_decodable_final(void) {
     ASSERT_TRUE(record != NULL && record->archived);
     ASSERT_FALSE(fake_exists(&fake, "DGCTMP"));
     ASSERT_FALSE(fake_exists(&fake, "DGCBAK"));
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     ASSERT_TRUE(record != NULL &&
                 project_decode(&loaded_state,
                                &loaded_project,
@@ -344,7 +345,7 @@ static void test_corrupt_load_leaves_destinations_unchanged(void) {
 
     app_state_init(&state);
     state.view = APP_VIEW_SPLIT;
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     set_and_commit(&loaded_project, 0, "q=7");
     loaded_project.dirty = false;
     state_snapshot = state;
@@ -383,7 +384,7 @@ static void test_load_recovers_a_valid_backup_after_interruption(void) {
     ASSERT_TRUE(fake_rename(&fake, "DGCPROJ", "DGCBAK"));
     fake.operation = 0;
 
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     result = project_store_load(&fake.backend,
                                 "DGCPROJ",
                                 &loaded_state,
@@ -410,7 +411,7 @@ static void test_load_replaces_a_corrupt_final_with_a_valid_backup(void) {
     record->length = 6;
     fake.operation = 0;
 
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     result = project_store_load(&fake.backend,
                                 "DGCPROJ",
                                 &loaded_state,
@@ -451,7 +452,7 @@ static void test_load_discards_temp_when_final_was_never_rotated(void) {
     install_old_final(&fake);
     install_record(&fake, "DGCTMP", new_bytes, new_length, false);
 
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     result = project_store_load(&fake.backend,
                                 "DGCPROJ",
                                 &loaded_state,
@@ -473,7 +474,7 @@ static void test_load_finishes_promoted_final_recovery(void) {
     install_record(&fake, "DGCPROJ", new_bytes, new_length, false);
     install_record(&fake, "DGCBAK", old_bytes, old_length, true);
 
-    project_init(&loaded_project);
+    project_dispose(&loaded_project);
     result = project_store_load(&fake.backend,
                                 "DGCPROJ",
                                 &loaded_state,
@@ -518,7 +519,97 @@ static void test_recovery_failures_keep_the_backup(void) {
     ASSERT_TRUE(fake_exists(&fake, "DGCBAK"));
 }
 
+static void test_load_allocation_failure_keeps_destination_and_saved_bytes(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState state;
+    Project destination;
+    StoreResult result;
+    unsigned fail;
+
+    prepare_projects(&old_state, &new_state);
+    for (fail = 1; fail <= 2; fail++) {
+        size_t bytes;
+        FakeRecord *record;
+        fake_init(&fake);
+        install_record(&fake, "DGCPROJ", new_bytes, new_length, true);
+        project_init_with_memory(&destination, counting_memory());
+        set_and_commit(&destination, 0, "q=7");
+        destination.dirty = false;
+        bytes = memory_bytes;
+        app_state_init(&state);
+        state.selected_expression = 6;
+        memory_fail_on = memory_calls + fail;
+        result = project_store_load(&fake.backend, "DGCPROJ", &state, &destination);
+        ASSERT_FALSE(result.ok);
+        ASSERT_EQ_INT(STORE_ERR_MEMORY, result.error);
+        ASSERT_EQ_INT(APP_VIEW_EXPRESSIONS, state.view);
+        ASSERT_EQ_INT(GRAPH_MODE_2D, state.mode);
+        ASSERT_EQ_INT(6, state.selected_expression);
+        ASSERT_STR_EQ("q=7", project_line_source(&destination, 0));
+        ASSERT_FLOAT_EQ(7.0f, project_evaluate_line(&destination, 0).value);
+        ASSERT_FALSE(destination.dirty);
+        ASSERT_EQ_INT(1, memory_live);
+        ASSERT_EQ_INT(bytes, memory_bytes);
+        record = fake_find(&fake, "DGCPROJ");
+        ASSERT_TRUE(record != NULL && record->archived);
+        ASSERT_EQ_INT(new_length, record->length);
+        ASSERT_TRUE(memcmp(new_bytes, record->bytes, new_length) == 0);
+        ASSERT_FALSE(fake_exists(&fake, "DGCTMP"));
+        ASSERT_FALSE(fake_exists(&fake, "DGCBAK"));
+        project_dispose(&destination);
+        ASSERT_EQ_INT(0, memory_live);
+        ASSERT_EQ_INT(0, memory_bytes);
+    }
+}
+
+static void test_legacy_load_ignores_inactive_drafts_and_moves_the_allocator(void) {
+    AppState old_state;
+    AppState new_state;
+    AppState state;
+    Project destination;
+    FakeRecord *record;
+    uint32_t crc;
+    unsigned index;
+
+    prepare_projects(&old_state, &new_state);
+    /* In v1, line zero may hold an inactive draft distinct from committed a=9. */
+    new_bytes[15] = 1;
+    memcpy(&new_bytes[24], "q=8", 3);
+    crc = project_crc32(&new_bytes[13], new_length - 13);
+    for (index = 0; index < 4; index++) {
+        new_bytes[9 + index] = (uint8_t)(crc >> (8 * index));
+    }
+    fake_init(&fake);
+    install_record(&fake, "DGCPROJ", new_bytes, new_length, true);
+    project_init_with_memory(&destination, counting_memory());
+    set_and_commit(&destination, 0, "q=7");
+    ASSERT_TRUE(project_store_load(&fake.backend, "DGCPROJ", &state, &destination).ok);
+    ASSERT_STR_EQ("a=9", project_line_source(&destination, 0));
+    ASSERT_STR_EQ("a=9", project_line_display_text(&destination, 0));
+    ASSERT_EQ_INT(EXPRESSION_VALID, project_line_status(&destination, 0));
+    ASSERT_STR_EQ("b=a+1", project_line_source(&destination, 1));
+    ASSERT_FLOAT_EQ(10.0f, project_evaluate_line(&destination, 1).value);
+    ASSERT_EQ_INT(2, memory_live);
+    ASSERT_EQ_INT(memory_bytes, project_payload_bytes(&destination));
+    ASSERT_FALSE(project_is_editing(&destination));
+    ASSERT_FALSE(destination.dirty);
+    ASSERT_EQ_INT(1, state.selected_expression);
+    ASSERT_EQ_INT(GRAPH_MODE_3D, state.mode);
+    ASSERT_EQ_INT(APP_VIEW_GRAPH, state.view);
+    record = fake_find(&fake, "DGCPROJ");
+    ASSERT_TRUE(memcmp(new_bytes, record->bytes, new_length) == 0);
+    project_dispose(&destination);
+    ASSERT_EQ_INT(0, memory_live);
+    ASSERT_EQ_INT(0, memory_bytes);
+}
+
 void run_atomic_store_tests(void) {
+    project_init(&old_project);
+    project_init(&new_project);
+    project_init(&loaded_project);
+    test_load_allocation_failure_keeps_destination_and_saved_bytes();
+    test_legacy_load_ignores_inactive_drafts_and_moves_the_allocator();
     test_every_save_failure_restores_the_old_project();
     test_partial_and_reported_close_failures_preserve_old_project();
     test_success_leaves_only_an_archived_decodable_final();
@@ -529,4 +620,7 @@ void run_atomic_store_tests(void) {
     test_load_discards_temp_when_final_was_never_rotated();
     test_load_finishes_promoted_final_recovery();
     test_recovery_failures_keep_the_backup();
+    project_dispose(&old_project);
+    project_dispose(&new_project);
+    project_dispose(&loaded_project);
 }

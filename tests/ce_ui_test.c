@@ -228,6 +228,7 @@ static void test_every_menu_selection_preserves_normal_draw_buffer_roles(void) {
         ce_ui_draw(&state, &project, false);
         ASSERT_EQ_INT(TEST_SWAP_BUFFERS,
                       draw_operations[draw_operation_count - 1]);
+        project_dispose(&project);
     }
 }
 
@@ -267,6 +268,7 @@ static void test_footer_uses_five_non_overlapping_key_slots(void) {
         ASSERT_TRUE(footer_prints[index].x >= (int)index * 64);
         ASSERT_TRUE(right <= (int)(index + 1) * 64);
     }
+    project_dispose(&project);
 }
 
 static void test_footer_highlights_the_active_page(void) {
@@ -300,6 +302,7 @@ static void test_footer_highlights_the_active_page(void) {
                             transparent_text_color);
             }
         }
+        project_dispose(&project);
     }
 }
 

@@ -239,7 +239,8 @@ StoreResult project_store_load(StorageBackend *backend,
                         work_buffer,
                         length,
                         &codec_error)) {
-        return store_result(false, STORE_ERR_VALIDATE);
+        return store_result(false, codec_error == CODEC_ERR_MEMORY
+                                       ? STORE_ERR_MEMORY : STORE_ERR_VALIDATE);
     }
     return store_result(true, STORE_OK);
 }
