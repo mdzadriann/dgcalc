@@ -91,6 +91,9 @@ bool project_clear_line(Project *project, uint8_t index);
 CommitResult project_validate_draft(Project *project, uint8_t index);
 CommitResult project_commit_line(Project *project, uint8_t index);
 EvalResult project_evaluate_line(Project *project, uint8_t index);
+bool project_line_is_drawable_2d(const Project *project, uint8_t index);
+EvalResult project_evaluate_2d(const Project *project, uint8_t index,
+                               float x, float y);
 void project_mark_dependents_dirty(Project *project, uint8_t index);
 
 #endif

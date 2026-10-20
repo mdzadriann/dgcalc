@@ -1,5 +1,6 @@
 #include "project/project.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -533,10 +534,13 @@ typedef struct {
 } LocalBinding;
 
 typedef struct {
-    Project *project;
+    const Project *project;
     uint32_t visiting;
     LocalBinding locals[PROJECT_MAX_EXPRESSIONS];
     uint8_t local_count;
+    bool coordinates_2d;
+    float x;
+    float y;
 } ProjectEvalState;
 
 static EvalResult evaluate_line(ProjectEvalState *state, uint8_t index);
@@ -553,6 +557,11 @@ static EvalError resolve_symbol(void *user, const char *name, float *value) {
             *value = state->locals[local - 1].value;
             return EVAL_OK;
         }
+    }
+
+    if (state->coordinates_2d && (symbol == 'x' || symbol == 'y')) {
+        *value = symbol == 'x' ? state->x : state->y;
+        return EVAL_OK;
     }
 
     index = find_definition(state->project, symbol, false);
@@ -573,7 +582,7 @@ static EvalError resolve_call(void *user,
     ProjectEvalState *state = (ProjectEvalState *)user;
     int8_t found = find_definition(state->project, (uint8_t)name[0], true);
     uint8_t index;
-    ExpressionLine *line;
+    const ExpressionLine *line;
     EvalContext context = {resolve_symbol, resolve_call, state};
     EvalResult result;
 
@@ -605,7 +614,7 @@ static EvalError resolve_call(void *user,
 }
 
 static EvalResult evaluate_line(ProjectEvalState *state, uint8_t index) {
-    ExpressionLine *line;
+    const ExpressionLine *line;
     EvalContext context = {resolve_symbol, resolve_call, state};
     EvalResult result;
 
@@ -641,5 +650,38 @@ EvalResult project_evaluate_line(Project *project, uint8_t index) {
 
     memset(&state, 0, sizeof(state));
     state.project = project;
+    return evaluate_line(&state, index);
+}
+
+bool project_line_is_drawable_2d(const Project *project, uint8_t index) {
+    AstView tree;
+    AstId root;
+
+    return project != NULL &&
+           project_line_status(project, index) == EXPRESSION_VALID &&
+           project_line_role(project, index) == EXPR_ROLE_RELATION_2D &&
+           project_line_tree(project, index, &tree, &root) &&
+           tree.nodes != NULL && root < tree.count &&
+           tree.nodes[root].kind == AST_RELATION &&
+           tree.nodes[root].op == AST_OP_EQ;
+}
+
+EvalResult project_evaluate_2d(const Project *project, uint8_t index,
+                               float x, float y) {
+    ProjectEvalState state;
+    EvalResult failed = {0.0f, EVAL_ERR_UNDEFINED};
+
+    if (!project_line_is_drawable_2d(project, index)) {
+        return failed;
+    }
+    if (!isfinite(x) || !isfinite(y)) {
+        failed.error = EVAL_ERR_NONFINITE;
+        return failed;
+    }
+    memset(&state, 0, sizeof(state));
+    state.project = project;
+    state.coordinates_2d = true;
+    state.x = x;
+    state.y = y;
     return evaluate_line(&state, index);
 }

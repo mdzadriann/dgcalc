@@ -431,7 +431,203 @@ static void test_replacement_moves_ownership_and_disposes_destination_once(void)
     ASSERT_EQ_INT(0, memory_bytes);
 }
 
+static void test_2d_equalities_return_signed_residuals(void) {
+    static const struct {
+        const char *source;
+        float x;
+        float y;
+        float residual;
+    } cases[] = {
+        {"y=x", 2, 2, 0},
+        {"x=2", 2, 9, 0},
+        {"x^2+y^2=25", 3, 4, 0},
+        {"25=x^2+y^2", 3, 4, 0},
+        {"x^2+y^2=25", 0, 4, -9},
+        {"25=x^2+y^2", 0, 4, 9},
+        {"x=y^2", 9, 3, 0},
+        {"9x^2+4y^2=36", 2, 0, 0}
+    };
+    Project project;
+    size_t index;
+
+    project_init(&project);
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        EvalResult result;
+        project_set_and_commit(&project, 0, cases[index].source);
+        ASSERT_TRUE(project_line_is_drawable_2d(&project, 0));
+        result = project_evaluate_2d(&project, 0, cases[index].x, cases[index].y);
+        ASSERT_EQ_INT(EVAL_OK, result.error);
+        ASSERT_FLOAT_EQ(cases[index].residual, result.value);
+    }
+    project_dispose(&project);
+}
+
+static void test_2d_resolution_uses_locals_then_coordinates_then_definitions(void) {
+    Project project;
+
+    project_init(&project);
+    project_set_and_commit(&project, 0, "a=2");
+    project_set_and_commit(&project, 1, "f(t)=t^2+a");
+    project_set_and_commit(&project, 2, "y=f(x)");
+    project_set_and_commit(&project, 3, "g(x)=x^2+a");
+    project_set_and_commit(&project, 4, "y=g(4)");
+    project_set_and_commit(&project, 5, "h(a)=a+x");
+    project_set_and_commit(&project, 6, "y=h(7)");
+    project_set_and_commit(&project, 7, "b=x+2*y+a");
+    project_set_and_commit(&project, 8, "y=b");
+    project_set_and_commit(&project, 9, "f(3)");
+    project_set_and_commit(&project, 10, "g(4)");
+    project_set_and_commit(&project, 11, "2+3");
+
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 2, 3, 11).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 2, 3, 11).value);
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 4, 3, 18).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 4, 3, 18).value);
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 6, 3, 10).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 6, 3, 10).value);
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 8, 3, 4).error);
+    ASSERT_FLOAT_EQ(-9, project_evaluate_2d(&project, 8, 3, 4).value);
+    ASSERT_FLOAT_EQ(2, project_evaluate_line(&project, 0).value);
+    ASSERT_FLOAT_EQ(11, project_evaluate_line(&project, 9).value);
+    ASSERT_FLOAT_EQ(18, project_evaluate_line(&project, 10).value);
+    ASSERT_FLOAT_EQ(5, project_evaluate_line(&project, 11).value);
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_line(&project, 7).error);
+    project_dispose(&project);
+}
+
+static void test_2d_boundary_skips_non_drawable_and_invalid_drafts(void) {
+    static const char *const skipped[] = {
+        "2+3", "a=2", "f(t)=t^2", "y<x", "y<=x", "y>x", "y>=x",
+        "x+y+z=1", "y=q", "b=c", "c=b", "y=b"
+    };
+    Project project;
+    unsigned index;
+
+    project_init(&project);
+    for (index = 0; index < sizeof(skipped) / sizeof(skipped[0]); index++) {
+        project_set_and_commit(&project, (uint8_t)index, skipped[index]);
+    }
+    ASSERT_EQ_INT(EXPRESSION_VALID, project_line_status(&project, 7));
+    ASSERT_EQ_INT(EXPR_ROLE_RELATION_3D, project_line_role(&project, 7));
+    ASSERT_EQ_INT(EXPRESSION_UNDEFINED, project_line_status(&project, 8));
+    ASSERT_EQ_INT(EXPRESSION_CYCLE, project_line_status(&project, 11));
+    ASSERT_EQ_INT(EVAL_ERR_CYCLE, project_evaluate_line(&project, 9).error);
+    ASSERT_EQ_INT(EVAL_ERR_CYCLE, project_evaluate_line(&project, 11).error);
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        ASSERT_FALSE(project_line_is_drawable_2d(&project, (uint8_t)index));
+        ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
+                      project_evaluate_2d(&project, (uint8_t)index, 2, 2).error);
+    }
+    for (index = PROJECT_MAX_EXPRESSIONS; index <= UINT8_MAX; index++) {
+        ASSERT_FALSE(project_line_is_drawable_2d(&project, (uint8_t)index));
+        ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
+                      project_evaluate_2d(&project, (uint8_t)index, 2, 2).error);
+    }
+    ASSERT_FALSE(project_line_is_drawable_2d(NULL, 0));
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(NULL, 0, 2, 2).error);
+
+    project_set_and_commit(&project, 15, "y=x");
+    ASSERT_TRUE(project_set_draft(&project, 15, "y="));
+    ASSERT_FALSE(project_validate_draft(&project, 15).ok);
+    ASSERT_TRUE(project_line_has_committed(&project, 15));
+    ASSERT_FALSE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(&project, 15, 2, 2).error);
+    project_cancel_edit(&project);
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_TRUE(project_set_draft(&project, 15, "1=1"));
+    ASSERT_FALSE(project_commit_line(&project, 15).ok);
+    ASSERT_FALSE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(&project, 15, 2, 2).error);
+    project_dispose(&project);
+}
+
+static void test_2d_evaluation_propagates_sample_errors(void) {
+    static const struct {
+        const char *source;
+        float x;
+        float y;
+        EvalError error;
+    } cases[] = {
+        {"y=1/x", 0, 1, EVAL_ERR_DIV_ZERO},
+        {"y=sqrt(x)", -1, 0, EVAL_ERR_DOMAIN},
+        {"y=exp(x)", 1000, 0, EVAL_ERR_NONFINITE},
+        {"y=x", INFINITY, 0, EVAL_ERR_NONFINITE},
+        {"y=x", 0, NAN, EVAL_ERR_NONFINITE},
+        {"x=2", 2, INFINITY, EVAL_ERR_NONFINITE},
+        {"y=2", NAN, 2, EVAL_ERR_NONFINITE},
+        {"y=z(1)", 0, 0, EVAL_ERR_UNDEFINED}
+    };
+    Project project;
+    size_t index;
+
+    project_init(&project);
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        project_set_and_commit(&project, 0, cases[index].source);
+        ASSERT_TRUE(project_line_is_drawable_2d(&project, 0));
+        ASSERT_EQ_INT(cases[index].error,
+                      project_evaluate_2d(&project, 0, cases[index].x, cases[index].y).error);
+    }
+    project_dispose(&project);
+}
+
+static void test_2d_sampling_does_not_allocate_or_mutate_project(void) {
+    Project project;
+    const Project *readonly = &project;
+    DependencyGraph dependencies;
+    AstView before;
+    AstView after;
+    AstId root_before;
+    AstId root_after;
+    AstNode nodes[AST_MAX_NODES];
+    unsigned calls;
+    unsigned index;
+    size_t bytes;
+
+    project_init_with_memory(&project, counting_memory());
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        project_set_and_commit(&project, (uint8_t)index, "y=x");
+    }
+    ASSERT_TRUE(project_set_draft(&project, 0, "y=x+1"));
+    project.dirty = false;
+    dependencies = project.dependencies;
+    calls = memory_calls;
+    bytes = project_payload_bytes(&project);
+    memory_fail_on = calls + 1;
+    ASSERT_TRUE(project_line_tree(&project, 0, &before, &root_before));
+    memcpy(nodes, before.nodes, before.count * sizeof(nodes[0]));
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        ASSERT_TRUE(project_line_is_drawable_2d(readonly, (uint8_t)index));
+        ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(readonly, (uint8_t)index, 2, 2).error);
+        ASSERT_FLOAT_EQ(0, project_evaluate_2d(readonly, (uint8_t)index, 2, 2).value);
+        ASSERT_STR_EQ("y=x", project_line_source(readonly, (uint8_t)index));
+        ASSERT_EQ_INT(EXPRESSION_VALID, project_line_status(readonly, (uint8_t)index));
+    }
+    ASSERT_EQ_INT(calls, memory_calls);
+    ASSERT_EQ_INT(PROJECT_MAX_EXPRESSIONS, memory_live);
+    ASSERT_EQ_INT(bytes, project_payload_bytes(readonly));
+    ASSERT_FALSE(project.dirty);
+    ASSERT_EQ_INT(PROJECT_MAX_EXPRESSIONS, project.count);
+    ASSERT_TRUE(project_is_editing(readonly));
+    ASSERT_EQ_INT(0, project_editing_index(readonly));
+    ASSERT_EQ_INT(5, project_editor_cursor(readonly));
+    ASSERT_STR_EQ("y=x+1", project_line_display_text(readonly, 0));
+    ASSERT_TRUE(memcmp(&dependencies, &project.dependencies, sizeof(dependencies)) == 0);
+    ASSERT_TRUE(project_line_tree(readonly, 0, &after, &root_after));
+    ASSERT_TRUE(before.nodes == after.nodes);
+    ASSERT_EQ_INT(before.count, after.count);
+    ASSERT_EQ_INT(root_before, root_after);
+    ASSERT_TRUE(memcmp(nodes, after.nodes, after.count * sizeof(nodes[0])) == 0);
+    project_dispose(&project);
+    ASSERT_EQ_INT(0, memory_live);
+    ASSERT_EQ_INT(0, memory_bytes);
+}
+
 void run_project_tests(void) {
+    test_2d_equalities_return_signed_residuals();
+    test_2d_resolution_uses_locals_then_coordinates_then_definitions();
+    test_2d_boundary_skips_non_drawable_and_invalid_drafts();
+    test_2d_evaluation_propagates_sample_errors();
+    test_2d_sampling_does_not_allocate_or_mutate_project();
     test_clear_keeps_the_shared_editor_active_without_retaining_payloads();
     test_sparse_payloads_allocate_once_and_release_on_clear();
     test_allocation_failure_preserves_committed_tree_and_dependencies();
