@@ -30,7 +30,7 @@ void gfx_Line(int x0, int y0, int x1, int y1);
 void gfx_PrintStringXY(const char *text, int x, int y);
 void gfx_SetTextXY(int x, int y);
 void gfx_PrintUInt(unsigned int value, int digits);
-int gfx_GetStringWidth(const char *text);
+unsigned int gfx_GetStringWidth(const char *text);
 void gfx_Blit(gfx_location_t source);
 #define gfx_BlitScreen() gfx_Blit(gfx_screen)
 #define gfx_BlitBuffer() gfx_Blit(gfx_buffer)

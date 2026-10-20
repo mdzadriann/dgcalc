@@ -24,6 +24,14 @@ size_t footer_print_count;
 int footer_highlights[5];
 uint8_t footer_highlight_colors[5];
 size_t footer_highlight_count;
+TestLine graph_lines[8192];
+size_t graph_line_count;
+TestPrint graph_prints[512];
+size_t graph_print_count;
+int static_frames;
+int swapped_frames[32];
+static int buffer_frames[2];
+static unsigned draw_buffer;
 
 static void record_operation(TestDrawOperation operation) {
     if (draw_operation_count <
@@ -48,6 +56,11 @@ void reset_fake_hardware(void) {
     draw_operation_count = 0;
     footer_print_count = 0;
     footer_highlight_count = 0;
+    graph_line_count = 0;
+    graph_print_count = 0;
+    static_frames = 0;
+    buffer_frames[0] = buffer_frames[1] = 0;
+    draw_buffer = 1;
 }
 
 void script_keys(const kb_lkey_t *keys, size_t count) {
@@ -79,7 +92,7 @@ uint16_t gfx_RGBTo1555(uint8_t red, uint8_t green, uint8_t blue) {
 
 void gfx_Begin(void) {}
 void gfx_End(void) {}
-void fake_gfx_set_draw_buffer(void) {}
+void fake_gfx_set_draw_buffer(void) { draw_buffer = 1; }
 void gfx_SetTextScale(uint8_t width, uint8_t height) {
     (void)width;
     (void)height;
@@ -90,7 +103,12 @@ void gfx_SetTextTransparentColor(uint8_t color) {
     transparent_text_color = color;
 }
 void gfx_SetColor(uint8_t color) { draw_color = color; }
-void gfx_FillScreen(uint8_t color) { (void)color; }
+void gfx_FillScreen(uint8_t color) {
+    (void)color;
+    buffer_frames[draw_buffer] = ++static_frames;
+    footer_print_count = 0;
+    footer_highlight_count = 0;
+}
 void gfx_FillRectangle_NoClip(int x, int y, int width, int height) {
     if (dialog_draw_pending) {
         record_operation(TEST_DRAW_DIALOG);
@@ -108,21 +126,19 @@ void gfx_Rectangle_NoClip(int x, int y, int width, int height) {
     (void)width;
     (void)height;
 }
+static void record_line(int x0, int y0, int x1, int y1, bool segment) {
+    if (graph_line_count < sizeof(graph_lines) / sizeof(graph_lines[0]))
+        graph_lines[graph_line_count++] = (TestLine){
+            x0, y0, x1, y1, draw_color, buffer_frames[draw_buffer], segment};
+}
 void gfx_HorizLine_NoClip(int x, int y, int length) {
-    (void)x;
-    (void)y;
-    (void)length;
+    record_line(x, y, x + length - 1, y, false);
 }
 void gfx_VertLine_NoClip(int x, int y, int length) {
-    (void)x;
-    (void)y;
-    (void)length;
+    record_line(x, y, x, y + length - 1, false);
 }
 void gfx_Line(int x0, int y0, int x1, int y1) {
-    (void)x0;
-    (void)y0;
-    (void)x1;
-    (void)y1;
+    record_line(x0, y0, x1, y1, true);
 }
 void gfx_SetTextXY(int x, int y) {
     (void)x;
@@ -132,10 +148,21 @@ void gfx_PrintUInt(unsigned int value, int digits) {
     (void)value;
     (void)digits;
 }
-int gfx_GetStringWidth(const char *text) {
-    return (int)strlen(text) * 8;
+unsigned int gfx_GetStringWidth(const char *text) {
+    return (unsigned int)strlen(text) * 8;
 }
 void gfx_PrintStringXY(const char *text, int x, int y) {
+    if (y < 220 && graph_print_count < 512) {
+        TestPrint *printed = &graph_prints[graph_print_count++];
+        size_t length = strlen(text);
+        if (length > 40) length = 40;
+        memcpy(printed->text, text, length);
+        printed->text[length] = '\0';
+        printed->x = x;
+        printed->y = y;
+        printed->color = text_color;
+        printed->frame = buffer_frames[draw_buffer];
+    }
     if (y >= 220 && footer_print_count < 8) {
         FooterPrint *printed = &footer_prints[footer_print_count++];
         size_t length = strlen(text);
@@ -151,15 +178,19 @@ void gfx_PrintStringXY(const char *text, int x, int y) {
 }
 void gfx_Blit(gfx_location_t source) {
     if (source == gfx_screen) {
+        buffer_frames[draw_buffer] = buffer_frames[draw_buffer ^ 1];
         screen_blits++;
         record_operation(TEST_COPY_SCREEN_TO_BUFFER);
         dialog_draw_pending = true;
     } else {
+        buffer_frames[draw_buffer ^ 1] = buffer_frames[draw_buffer];
         buffer_blits++;
         record_operation(TEST_COPY_BUFFER_TO_SCREEN);
     }
 }
 void gfx_SwapDraw(void) {
+    if (swaps < 32) swapped_frames[swaps] = buffer_frames[draw_buffer];
+    draw_buffer ^= 1;
     swaps++;
     record_operation(TEST_SWAP_BUFFERS);
 }

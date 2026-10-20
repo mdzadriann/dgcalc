@@ -1,4 +1,5 @@
 #include "platform/ce/ce_ui.h"
+#include "graph/project_plot2d.h"
 
 #include <graphx.h>
 #include <keypadc.h>
@@ -6,6 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -18,6 +20,10 @@ enum {
     COLOR_GRID,
     COLOR_GREEN
 };
+
+static ProjectPlot2D render_job;
+static enum { RENDER_IDLE, RENDER_COARSE, RENDER_WAIT, RENDER_FINE } render_phase;
+static bool render_editing;
 
 static void configure_palette(void) {
     gfx_palette[COLOR_BACKGROUND] = gfx_RGBTo1555(248, 249, 250);
@@ -171,7 +177,7 @@ static void draw_expression_list(const AppState *state,
     }
 }
 
-static void draw_graph_panel(int x, int width, GraphMode mode) {
+static void draw_3d_panel(int x, int width) {
     int grid_x;
     int grid_y;
     int center_x = x + width / 2;
@@ -188,20 +194,85 @@ static void draw_graph_panel(int x, int width, GraphMode mode) {
     gfx_SetColor(COLOR_MUTED);
     gfx_VertLine_NoClip(center_x, 24, 196);
     gfx_HorizLine_NoClip(x, 122, width);
-    if (mode == GRAPH_MODE_3D) {
-        gfx_Line(center_x, 122, x + width - 18, 52);
-    }
+    gfx_Line(center_x, 122, x + width - 18, 52);
     gfx_SetColor(COLOR_PANEL);
     gfx_FillRectangle_NoClip(center_x - 55, 91, 110, 42);
     gfx_SetTextFGColor(COLOR_TEXT);
-    gfx_PrintStringXY(mode == GRAPH_MODE_2D ? "2D graph" : "3D graph",
+    gfx_PrintStringXY("3D graph",
                       center_x - 28,
                       100);
     gfx_SetTextFGColor(COLOR_MUTED);
     gfx_PrintStringXY("plotting later", center_x - 48, 117);
 }
 
+static void draw_tick(float value, int x, int y, GraphRect rect) {
+    char text[8], reversed[6];
+    unsigned long number;
+    uint8_t count = 0, length = 0;
+    if (!isfinite(value) || value < -999999 || value > 999999 ||
+        floorf(value) != value) return;
+    if (value < 0) text[length++] = '-';
+    number = (unsigned long)fabsf(value);
+    do {
+        reversed[count++] = (char)('0' + number % 10);
+        number /= 10;
+    } while (number);
+    while (count) text[length++] = reversed[--count];
+    text[length] = '\0';
+    if (x >= rect.x && x + (int)gfx_GetStringWidth(text) <= rect.x + rect.width &&
+        y >= rect.y && y + 8 <= rect.y + rect.height)
+        gfx_PrintStringXY(text, x, y);
+}
+
+static void draw_graph_panel(GraphRect rect, const Viewport2D *viewport) {
+    float step, min_x, min_y, unused, first, sx, sy, axis_x, axis_y;
+    int tick_x, tick_y;
+    unsigned i;
+    gfx_SetColor(COLOR_BACKGROUND);
+    gfx_FillRectangle_NoClip(rect.x, rect.y, rect.width, rect.height);
+    if (!isfinite(viewport->center_x) || !isfinite(viewport->center_y) ||
+        !isfinite(viewport->units_per_pixel) ||
+        viewport->units_per_pixel < VIEWPORT2D_MIN_SCALE ||
+        viewport->units_per_pixel > VIEWPORT2D_MAX_SCALE) return;
+    step = viewport2d_grid_step(viewport);
+    if (!isfinite(step) || step <= 0) return;
+    viewport2d_world_to_screen(viewport, rect, 0, 0, &axis_x, &axis_y);
+    tick_x = rect.x + 2;
+    tick_y = rect.y + rect.height - 8;
+    if (isfinite(axis_x) && axis_x >= rect.x && axis_x < rect.x + rect.width)
+        tick_x = (int)axis_x + 3;
+    if (isfinite(axis_y) && axis_y >= rect.y && axis_y < rect.y + rect.height - 11)
+        tick_y = (int)axis_y + 3;
+    viewport2d_screen_to_world(viewport, rect, rect.x, rect.y + rect.height - 1,
+                               &min_x, &min_y);
+    gfx_SetColor(COLOR_GRID);
+    gfx_SetTextFGColor(COLOR_MUTED);
+    first = ceilf(min_x / step) * step;
+    for (i = 0; i < (unsigned)rect.width / 20 + 2; i++) {
+        float value = first + i * step;
+        viewport2d_world_to_screen(viewport, rect, value, 0, &sx, &unused);
+        if (!isfinite(sx) || sx < rect.x || sx > rect.x + rect.width - 1) continue;
+        gfx_VertLine_NoClip((int)floorf(sx + 0.5f), rect.y, rect.height);
+        draw_tick(value, (int)floorf(sx + 0.5f) + 2, tick_y, rect);
+    }
+    first = ceilf(min_y / step) * step;
+    for (i = 0; i < (unsigned)rect.height / 20 + 2; i++) {
+        float value = first + i * step;
+        viewport2d_world_to_screen(viewport, rect, 0, value, &unused, &sy);
+        if (!isfinite(sy) || sy < rect.y || sy > rect.y + rect.height - 1) continue;
+        gfx_HorizLine_NoClip(rect.x, (int)floorf(sy + 0.5f), rect.width);
+        if (value != 0) draw_tick(value, tick_x, (int)floorf(sy + 0.5f) + 2, rect);
+    }
+    gfx_SetColor(COLOR_MUTED);
+    if (isfinite(axis_x) && axis_x >= rect.x && axis_x <= rect.x + rect.width - 1)
+        gfx_VertLine_NoClip((int)floorf(axis_x + 0.5f), rect.y, rect.height);
+    if (isfinite(axis_y) && axis_y >= rect.y && axis_y <= rect.y + rect.height - 1)
+        gfx_HorizLine_NoClip(rect.x, (int)floorf(axis_y + 0.5f), rect.width);
+}
+
 void ce_ui_begin(void) {
+    project_plot2d_cancel(&render_job);
+    render_phase = RENDER_IDLE;
     gfx_Begin();
     gfx_SetDrawBuffer();
     configure_palette();
@@ -211,21 +282,37 @@ void ce_ui_begin(void) {
     gfx_SetTextTransparentColor(255);
 }
 
-void ce_ui_draw(const AppState *state,
-                const Project *project,
-                bool editing) {
+static void draw_static_frame(const AppState *state, const Project *project,
+                               bool editing) {
     gfx_FillScreen(COLOR_BACKGROUND);
     draw_header(state);
     if (state->view == APP_VIEW_EXPRESSIONS) {
         draw_expression_list(state, project, 320, editing);
     } else if (state->view == APP_VIEW_SPLIT) {
         draw_expression_list(state, project, 132, editing);
-        draw_graph_panel(132, 188, state->mode);
-    } else {
-        draw_graph_panel(0, 320, state->mode);
+    }
+    if (state->view != APP_VIEW_EXPRESSIONS) {
+        GraphRect rect = {state->view == APP_VIEW_SPLIT ? 132 : 0, 24,
+                          state->view == APP_VIEW_SPLIT ? 188 : 320, 196};
+        if (state->mode == GRAPH_MODE_2D) draw_graph_panel(rect, &state->viewport);
+        else draw_3d_panel(rect.x, rect.width);
     }
     draw_key_bar(state);
+}
+
+void ce_ui_draw(const AppState *state, const Project *project, bool editing) {
+    project_plot2d_cancel(&render_job);
+    render_phase = RENDER_IDLE;
+    render_editing = editing;
+    draw_static_frame(state, project, editing);
     gfx_SwapDraw();
+    if (state->mode == GRAPH_MODE_2D && state->view != APP_VIEW_EXPRESSIONS) {
+        GraphRect rect = {state->view == APP_VIEW_SPLIT ? 132 : 0, 24,
+                          state->view == APP_VIEW_SPLIT ? 188 : 320, 196};
+        draw_static_frame(state, project, editing);
+        project_plot2d_begin(&render_job, state->viewport, rect, PLOT2D_COARSE_STEP);
+        render_phase = RENDER_COARSE;
+    }
 }
 
 static bool any_key_down(void) {
@@ -236,6 +323,35 @@ static bool any_key_down(void) {
         }
     }
     return false;
+}
+
+static void draw_segment(void *user, uint8_t index, int16_t x0, int16_t y0,
+                          int16_t x1, int16_t y1) {
+    static const uint8_t colors[] = {COLOR_BLUE, COLOR_RED, COLOR_GREEN};
+    (void)user;
+    gfx_SetColor(colors[index % sizeof(colors)]);
+    gfx_Line(x0, y0, x1, y1);
+}
+
+bool ce_ui_render_step(const AppState *state, const Project *project,
+                       bool navigation_active) {
+    ProjectPlot2DStep result;
+    if (render_phase == RENDER_IDLE) return false;
+    if (render_phase == RENDER_WAIT) {
+        if (navigation_active) return true;
+        draw_static_frame(state, project, render_editing);
+        project_plot2d_begin(&render_job, state->viewport, render_job.job.rect,
+                             PLOT2D_FINE_STEP);
+        render_phase = RENDER_FINE;
+        /* Starting refinement is bounded separately; its first row waits for input. */
+        return true;
+    }
+    result = project_plot2d_step(&render_job, project, draw_segment, NULL);
+    if (result == PROJECT_PLOT2D_PROGRESS) return true;
+    if (result == PROJECT_PLOT2D_DONE) gfx_SwapDraw();
+    render_phase = result == PROJECT_PLOT2D_DONE && render_phase == RENDER_COARSE
+                       ? RENDER_WAIT : RENDER_IDLE;
+    return render_phase != RENDER_IDLE;
 }
 
 static void wait_for_release(void) {
@@ -371,5 +487,7 @@ AppAction ce_ui_show_message(const char *message) {
 }
 
 void ce_ui_end(void) {
+    project_plot2d_cancel(&render_job);
+    render_phase = RENDER_IDLE;
     gfx_End();
 }

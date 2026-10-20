@@ -215,6 +215,10 @@ int main(void) {
             handle_action(action, &running);
             redraw = true;
         }
+        if (!redraw && running) {
+            (void)ce_ui_render_step(&app_state, &project,
+                                    ce_input_graph_navigation_active());
+        }
     }
 
     ce_input_end();

@@ -12,6 +12,26 @@ typedef struct {
     uint8_t color;
 } FooterPrint;
 
+typedef struct {
+    int x0, y0, x1, y1;
+    uint8_t color;
+    int frame;
+    bool segment;
+} TestLine;
+
+typedef struct {
+    char text[41];
+    int x, y, frame;
+    uint8_t color;
+} TestPrint;
+
+extern TestLine graph_lines[8192];
+extern size_t graph_line_count;
+extern TestPrint graph_prints[512];
+extern size_t graph_print_count;
+extern int static_frames;
+extern int swapped_frames[32];
+
 typedef enum {
     TEST_COPY_SCREEN_TO_BUFFER,
     TEST_DRAW_DIALOG,
