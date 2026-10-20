@@ -41,6 +41,8 @@ static bool field_sample(void *user, float x, float y, float *value) {
         case 10: v = 100*x + y - 0.01f; break;
         case 11: v = x; break;
         case 12: v = y; break;
+        case 13: v = x*y; break;
+        case 14: v = y + FLT_EPSILON*x*(4-x*x); break;
         default: v = 1; break;
     }
     *value = v * f->sign;
@@ -332,10 +334,10 @@ static void test_exact_zero_edges_and_extreme_clipping(void) {
 }
 
 static void test_pole_between_vertical_edge_crossings(void) {
-    Viewport2D viewports[]={{-1,0,1},{1.5f,-0.5f,1}};
-    GraphRect rects[]={{0,0,320,196},{0,0,5,5}};
+    Viewport2D viewports[]={{-1,0,1},{1.5f,-0.5f,1},{1,-0.5f,1}};
+    GraphRect rects[]={{0,0,320,196},{0,0,5,5},{0,0,5,5}};
     unsigned fixture,i; int sign;
-    for(fixture=0;fixture<2;fixture++) for(sign=-1;sign<=1;sign+=2) {
+    for(fixture=0;fixture<3;fixture++) for(sign=-1;sign<=1;sign+=2) {
         Field f={.kind=9,.sign=(float)sign};
         Capture c=plot(&f,viewports[fixture],rects[fixture],4);
         unsigned bridges=0;
@@ -350,6 +352,48 @@ static void test_pole_between_vertical_edge_crossings(void) {
         ASSERT_EQ_INT(0,bridges);
         if(fixture==0) ASSERT_TRUE(c.count>0);
         else ASSERT_EQ_INT(0,c.count);
+    }
+}
+
+static void test_three_zero_corner_axes(void) {
+    const Segment expected[]={{0,4,4,4},{4,0,4,4},{4,4,4,8},{4,4,8,4}};
+    int sign;
+    for(sign=-1;sign<=1;sign+=2) {
+        Field f={.kind=13,.sign=(float)sign};
+        Capture c=plot(&f,(Viewport2D){0.5f,-0.5f,1},(GraphRect){0,0,9,9},4);
+        canonicalize(&c);
+        ASSERT_EQ_INT(4,c.count);
+        ASSERT_TRUE(memcmp(c.segments,expected,sizeof(expected))==0);
+    }
+}
+
+static void test_one_zero_edge_with_crossing_branch(void) {
+    const Viewport2D viewports[]={{1.5f,1.5f,1},{1.5f,-2.5f,1},
+                                 {2.5f,-1.5f,1},{-1.5f,-1.5f,1}};
+    const Segment expected[][2]={{{0,4,4,4},{1,0,1,4}},{{0,0,4,0},{1,0,1,4}},
+                                 {{0,0,0,4},{0,1,4,1}},{{0,1,4,1},{4,0,4,4}}};
+    unsigned edge;
+    int sign;
+    for(edge=0;edge<4;edge++) for(sign=-1;sign<=1;sign+=2) {
+        Field f={.kind=13,.sign=(float)sign};
+        Capture c=plot(&f,viewports[edge],(GraphRect){0,0,5,5},4);
+        canonicalize(&c);
+        ASSERT_EQ_INT(2,c.count);
+        ASSERT_TRUE(memcmp(c.segments,expected[edge],sizeof(expected[edge]))==0);
+    }
+}
+
+static void test_near_zero_interior_noise(void) {
+    const float scales[]={1e-12f,1,1e12f};
+    const Segment expected={0,2,4,2};
+    unsigned scale;
+    int sign;
+    for(scale=0;scale<3;scale++) for(sign=-1;sign<=1;sign+=2) {
+        Field f={.kind=14,.sign=sign*scales[scale]};
+        Capture c=plot(&f,(Viewport2D){0.5f,-0.5f,1},(GraphRect){0,0,5,5},4);
+        canonicalize(&c);
+        ASSERT_EQ_INT(1,c.count);
+        ASSERT_TRUE(memcmp(c.segments,&expected,sizeof(expected))==0);
     }
 }
 
@@ -390,5 +434,8 @@ void run_plot2d_tests(void) {
     test_candidate_midpoint_failures();
     test_exact_zero_edges_and_extreme_clipping();
     test_pole_between_vertical_edge_crossings();
+    test_three_zero_corner_axes();
+    test_one_zero_edge_with_crossing_branch();
+    test_near_zero_interior_noise();
     test_zero_edge_uniqueness_and_boundary_ownership();
 }

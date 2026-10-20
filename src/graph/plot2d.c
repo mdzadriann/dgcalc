@@ -97,6 +97,7 @@ static void emit(const Plot2DJob *job, uint8_t column, Point a, Point b, float l
                   Plot2DSampleFn sample, void *sample_user,
                   Plot2DSegmentFn segment, void *segment_user) {
     uint8_t i;
+    float interior_sign = 0, zero_tolerance = 8 * FLT_EPSILON * largest;
     int16_t x0, y0, x1, y1;
     /* Shared zero edges belong to the cell above/left; outer edges still belong here. */
     if ((column > 0 && a.x == b.x && a.x == column_x(job, column)) ||
@@ -109,6 +110,11 @@ static void emit(const Plot2DJob *job, uint8_t column, Point a, Point b, float l
         if (!sample_at(job, interior, sample, sample_user, &value) ||
             (fabsf(value) > largest && fabsf(value) - largest > 8 * FLT_EPSILON * largest))
             return;
+        /* A one-branch chord cannot cross another meaningful zero or pole. */
+        if (fabsf(value) > zero_tolerance) {
+            if (interior_sign != 0 && (value > 0) != (interior_sign > 0)) return;
+            interior_sign = value;
+        }
     }
     x0 = clipped_pixel(a.x, job->rect.x, job->rect.width);
     x1 = clipped_pixel(b.x, job->rect.x, job->rect.width);
@@ -123,7 +129,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
     uint8_t top = job->top, lower = top ^ 1;
     float values[4], largest = 0, orientation = 0;
     Point corners[4], points[4];
-    uint8_t edges[4], count = 0, i;
+    uint8_t edges[4], count = 0, i, zero_edges = 0, zero_edge = 0;
     bool positive[4], valid[4];
     if (!job->valid[top][column] || !job->valid[top][column+1] ||
         !job->valid[lower][column] || !job->valid[lower][column+1]) return;
@@ -142,6 +148,30 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
     corners[1] = (Point){(float)column_x(job,column+1), (float)job->row_y};
     corners[2] = (Point){corners[1].x, (float)bottom};
     corners[3] = (Point){corners[0].x, (float)bottom};
+    for (i = 0; i < 4; i++) {
+        uint8_t next = (i+1) % 4;
+        if (values[i] == 0 && values[next] == 0) {
+            emit(job, column, corners[i], corners[next], largest,
+                 sample, sample_user, segment, segment_user);
+            zero_edges++;
+            zero_edge = i;
+        }
+    }
+    /* Zero edges already join their vertices; no diagonal may join remote zeros. */
+    if (zero_edges) {
+        i = (zero_edge+2) % 4;
+        if (zero_edges == 1 && positive[i] != positive[(i+1)%4] &&
+            crossing(job, corners[i], corners[(i+1)%4], values[i], values[(i+1)%4],
+                     sample, sample_user, &points[0])) {
+            /* Bilinear continuation meets the zero edge at the opposite root's projection. */
+            points[1] = points[0];
+            if (zero_edge % 2 == 0) points[1].y = corners[zero_edge].y;
+            else points[1].x = corners[zero_edge].x;
+            emit(job, column, points[0], points[1], largest,
+                 sample, sample_user, segment, segment_user);
+        }
+        return;
+    }
     for (i = 0; i < 4; i++) {
         uint8_t next = (i+1) % 4;
         if (positive[i] == positive[next]) continue;
