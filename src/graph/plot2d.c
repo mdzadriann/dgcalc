@@ -7,6 +7,10 @@
 
 typedef struct { float x, y; } Point;
 
+static bool same_point(Point a, Point b) {
+    return a.x == b.x && a.y == b.y;
+}
+
 static bool sample_at(const Plot2DJob *job, Point p, Plot2DSampleFn sample,
                       void *user, float *value) {
     float x, y;
@@ -207,8 +211,14 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
         start = center_positive == positive[0] ? 0 : 1;
         for (i = 0; i < 2; i++) {
             uint8_t a = (start + 2*i) % 4, b = (a+1) % 4;
-            if (valid[a] && valid[b]) emit(job, column, bottom, points[a], points[b], largest,
-                                         sample, sample_user, segment, segment_user);
+            uint8_t first_b = (start+1) % 4;
+            if (!valid[a] || !valid[b]) continue;
+            if (i == 1 && valid[start] && valid[first_b] &&
+                ((same_point(points[a], points[start]) && same_point(points[b], points[first_b])) ||
+                 (same_point(points[b], points[start]) && same_point(points[a], points[first_b]))))
+                continue;
+            emit(job, column, bottom, points[a], points[b], largest,
+                 sample, sample_user, segment, segment_user);
         }
     }
 }

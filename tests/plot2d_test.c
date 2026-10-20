@@ -48,6 +48,8 @@ static bool field_sample(void *user, float x, float y, float *value) {
             if (y == 0) return false;
             v = x - 1/y; break;
         case 17: v = x - y*y*y; break;
+        case 18: v = (y-x)*(y-x); break;
+        case 19: v = (y+x)*(y+x); break;
         default: v = 1; break;
     }
     *value = v * f->sign;
@@ -390,6 +392,18 @@ static void test_three_zero_corner_axes(void) {
     }
 }
 
+static void test_collapsed_ambiguity_emits_one_diagonal(void) {
+    const Segment expected[]={{0,4,4,0},{0,0,4,4}};
+    int sign, diagonal;
+    for(diagonal=0;diagonal<2;diagonal++) for(sign=-1;sign<=1;sign+=2) {
+        Field f={.kind=18+diagonal,.sign=(float)sign};
+        Capture c=plot(&f,(Viewport2D){0.5f,-0.5f,1},(GraphRect){0,0,5,5},4);
+        canonicalize(&c);
+        ASSERT_EQ_INT(1,c.count);
+        ASSERT_TRUE(memcmp(c.segments,&expected[diagonal],sizeof(Segment))==0);
+    }
+}
+
 static void test_one_zero_edge_with_crossing_branch(void) {
     const Viewport2D viewports[]={{1.5f,1.5f,1},{1.5f,-2.5f,1},
                                  {2.5f,-1.5f,1},{-1.5f,-1.5f,1}};
@@ -459,6 +473,7 @@ void run_plot2d_tests(void) {
     test_pole_between_vertical_edge_crossings();
     test_smooth_inflections_and_horizontal_pole();
     test_three_zero_corner_axes();
+    test_collapsed_ambiguity_emits_one_diagonal();
     test_one_zero_edge_with_crossing_branch();
     test_near_zero_interior_noise();
     test_zero_edge_uniqueness_and_boundary_ownership();
