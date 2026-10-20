@@ -4,6 +4,7 @@ void app_state_init(AppState *state) {
     state->view = APP_VIEW_EXPRESSIONS;
     state->mode = GRAPH_MODE_2D;
     state->selected_expression = 0;
+    viewport2d_init(&state->viewport);
 }
 
 bool app_handle_action(AppState *state, AppAction action) {
@@ -23,6 +24,30 @@ bool app_handle_action(AppState *state, AppAction action) {
             break;
         case APP_ACTION_QUIT:
             return false;
+        case APP_ACTION_PAN_LEFT:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_pan_pixels(&state->viewport, -32, 0);
+            break;
+        case APP_ACTION_PAN_RIGHT:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_pan_pixels(&state->viewport, 32, 0);
+            break;
+        case APP_ACTION_PAN_UP:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_pan_pixels(&state->viewport, 0, -19.6f);
+            break;
+        case APP_ACTION_PAN_DOWN:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_pan_pixels(&state->viewport, 0, 19.6f);
+            break;
+        case APP_ACTION_ZOOM_IN:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_zoom(&state->viewport, 1.0f / 1.25f);
+            break;
+        case APP_ACTION_ZOOM_OUT:
+            if (state->view == APP_VIEW_GRAPH)
+                viewport2d_zoom(&state->viewport, 1.25f);
+            break;
         case APP_ACTION_NONE:
         case APP_ACTION_MOVE_SELECTION_UP:
         case APP_ACTION_MOVE_SELECTION_DOWN:

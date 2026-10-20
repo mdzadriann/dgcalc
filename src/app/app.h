@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "graph/viewport.h"
+
 typedef enum {
     APP_VIEW_EXPRESSIONS,
     APP_VIEW_SPLIT,
@@ -22,6 +24,12 @@ typedef enum {
     APP_ACTION_SHOW_GRAPH,
     APP_ACTION_MOVE_SELECTION_UP,
     APP_ACTION_MOVE_SELECTION_DOWN,
+    APP_ACTION_PAN_LEFT,
+    APP_ACTION_PAN_RIGHT,
+    APP_ACTION_PAN_UP,
+    APP_ACTION_PAN_DOWN,
+    APP_ACTION_ZOOM_IN,
+    APP_ACTION_ZOOM_OUT,
     APP_ACTION_BEGIN_EDIT,
     APP_ACTION_COMMIT_EDIT,
     APP_ACTION_CANCEL_EDIT,
@@ -38,6 +46,7 @@ typedef struct {
     AppView view;
     GraphMode mode;
     uint8_t selected_expression;
+    Viewport2D viewport;
 } AppState;
 
 void app_state_init(AppState *state);

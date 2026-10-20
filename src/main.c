@@ -84,6 +84,12 @@ static void handle_action(AppAction action, bool *running) {
         case APP_ACTION_SHOW_EXPRESSIONS:
         case APP_ACTION_SHOW_SPLIT:
         case APP_ACTION_SHOW_GRAPH:
+        case APP_ACTION_PAN_LEFT:
+        case APP_ACTION_PAN_RIGHT:
+        case APP_ACTION_PAN_UP:
+        case APP_ACTION_PAN_DOWN:
+        case APP_ACTION_ZOOM_IN:
+        case APP_ACTION_ZOOM_OUT:
             (void)app_handle_action(&app_state, action);
             break;
         case APP_ACTION_MOVE_SELECTION_UP:
@@ -197,7 +203,7 @@ int main(void) {
         }
         length_before = editor != NULL ? editor->length : 0;
         cursor_before = editor != NULL ? editor->cursor : 0;
-        action = ce_input_poll(editor, project_is_editing(&project));
+        action = ce_input_poll(editor, project_is_editing(&project), app_state.view);
         if (editor != NULL &&
             (editor->length != length_before || editor->cursor != cursor_before)) {
             redraw = true;

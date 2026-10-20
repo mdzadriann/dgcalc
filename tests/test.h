@@ -2,6 +2,7 @@
 #define DGCALC_TEST_H
 
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 extern int test_checks;
@@ -56,7 +57,7 @@ void test_fail(const char *file, int line, const char *message);
         if (test_difference < 0.0f) {                                             \
             test_difference = -test_difference;                                   \
         }                                                                         \
-        if (test_difference > 0.0001f) {                                          \
+        if (!isfinite(test_actual) || test_difference > 0.0001f) {                \
             char test_message[160];                                               \
             snprintf(test_message, sizeof(test_message),                          \
                      "expected %.7g, got %.7g: %s", (double)test_expected,       \

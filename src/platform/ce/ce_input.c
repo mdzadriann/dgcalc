@@ -136,7 +136,7 @@ void ce_input_begin(void) {
     second_latched = false;
 }
 
-AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
+AppAction ce_input_poll(EditorBuffer *active_editor, bool editing, AppView view) {
     kb_lkey_t key = first_new_key();
     const char *text;
 
@@ -176,6 +176,19 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
         alpha_latched = false;
         second_latched = false;
         return APP_ACTION_SHOW_GRAPH;
+    }
+    if (view == APP_VIEW_GRAPH) {
+        alpha_latched = false;
+        second_latched = false;
+        switch (key) {
+            case kb_KeyLeft: return APP_ACTION_PAN_LEFT;
+            case kb_KeyRight: return APP_ACTION_PAN_RIGHT;
+            case kb_KeyUp: return APP_ACTION_PAN_UP;
+            case kb_KeyDown: return APP_ACTION_PAN_DOWN;
+            case kb_KeyAdd: return APP_ACTION_ZOOM_IN;
+            case kb_KeySub: return APP_ACTION_ZOOM_OUT;
+            default: return APP_ACTION_NONE;
+        }
     }
     if (!editing) {
         alpha_latched = false;
@@ -240,6 +253,12 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing) {
         (void)insert_text(active_editor, text);
     }
     return APP_ACTION_NONE;
+}
+
+bool ce_input_graph_navigation_active(void) {
+    return kb_IsDown(kb_KeyLeft) || kb_IsDown(kb_KeyRight) ||
+           kb_IsDown(kb_KeyUp) || kb_IsDown(kb_KeyDown) ||
+           kb_IsDown(kb_KeyAdd) || kb_IsDown(kb_KeySub);
 }
 
 void ce_input_end(void) {
