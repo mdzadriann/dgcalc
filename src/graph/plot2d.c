@@ -93,15 +93,23 @@ static int16_t clipped_pixel(float value, int16_t min, int16_t length) {
     return (int16_t)pixel;
 }
 
-static void emit(const Plot2DJob *job, Point a, Point b, float largest,
+static void emit(const Plot2DJob *job, uint8_t column, Point a, Point b, float largest,
                   Plot2DSampleFn sample, void *sample_user,
                   Plot2DSegmentFn segment, void *segment_user) {
-    Point mid = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
-    float value;
+    uint8_t i;
     int16_t x0, y0, x1, y1;
-    if (!sample_at(job, mid, sample, sample_user, &value) ||
-        (fabsf(value) > largest && fabsf(value) - largest > 8 * FLT_EPSILON * largest))
+    /* Shared zero edges belong to the cell above/left; outer edges still belong here. */
+    if ((column > 0 && a.x == b.x && a.x == column_x(job, column)) ||
+        (job->row_y != job->rect.y && a.y == b.y && a.y == job->row_y))
         return;
+    for (i = 1; i <= 3; i++) {
+        float fraction = i * 0.25f, value;
+        Point interior = {a.x + (b.x - a.x) * fraction,
+                          a.y + (b.y - a.y) * fraction};
+        if (!sample_at(job, interior, sample, sample_user, &value) ||
+            (fabsf(value) > largest && fabsf(value) - largest > 8 * FLT_EPSILON * largest))
+            return;
+    }
     x0 = clipped_pixel(a.x, job->rect.x, job->rect.width);
     x1 = clipped_pixel(b.x, job->rect.x, job->rect.width);
     y0 = clipped_pixel(a.y, job->rect.y, job->rect.height);
@@ -143,7 +151,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
     }
     if (count == 2) {
         if (valid[edges[0]] && valid[edges[1]])
-            emit(job, points[edges[0]], points[edges[1]], largest,
+            emit(job, column, points[edges[0]], points[edges[1]], largest,
                  sample, sample_user, segment, segment_user);
     } else if (count == 4) {
         Point center = {(corners[0].x + corners[2].x)*0.5f,
@@ -156,7 +164,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
         start = center_positive == positive[0] ? 0 : 1;
         for (i = 0; i < 2; i++) {
             uint8_t a = (start + 2*i) % 4, b = (a+1) % 4;
-            if (valid[a] && valid[b]) emit(job, points[a], points[b], largest,
+            if (valid[a] && valid[b]) emit(job, column, points[a], points[b], largest,
                                          sample, sample_user, segment, segment_user);
         }
     }

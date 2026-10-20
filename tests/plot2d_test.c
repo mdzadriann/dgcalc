@@ -331,6 +331,56 @@ static void test_exact_zero_edges_and_extreme_clipping(void) {
     }
 }
 
+static void test_pole_between_vertical_edge_crossings(void) {
+    Viewport2D viewports[]={{-1,0,1},{1.5f,-0.5f,1}};
+    GraphRect rects[]={{0,0,320,196},{0,0,5,5}};
+    unsigned fixture,i; int sign;
+    for(fixture=0;fixture<2;fixture++) for(sign=-1;sign<=1;sign+=2) {
+        Field f={.kind=9,.sign=(float)sign};
+        Capture c=plot(&f,viewports[fixture],rects[fixture],4);
+        unsigned bridges=0;
+        for(i=0;i<c.count;i++) {
+            float x0,y0,x1,y1; Segment s=c.segments[i];
+            viewport2d_screen_to_world(&viewports[fixture],rects[fixture],s.x0,s.y0,&x0,&y0);
+            viewport2d_screen_to_world(&viewports[fixture],rects[fixture],s.x1,s.y1,&x1,&y1);
+            if(x0*x1<0) bridges++;
+        }
+        printf("pole vertical-edge fixture %u sign %d: %u segments, %u bridges\n",
+               fixture,sign,c.count,bridges);
+        ASSERT_EQ_INT(0,bridges);
+        if(fixture==0) ASSERT_TRUE(c.count>0);
+        else ASSERT_EQ_INT(0,c.count);
+    }
+}
+
+static void test_zero_edge_uniqueness_and_boundary_ownership(void) {
+    int kind,position,sign;
+    for(kind=11;kind<=12;kind++) for(position=0;position<3;position++) {
+        for(sign=-1;sign<=1;sign+=2) {
+            Viewport2D v={0.5f,-0.5f,1}; GraphRect r={0,0,9,9};
+            Field f={.kind=kind,.sign=(float)sign}; Capture c;
+            unsigned i; int min=INT_MAX,max=INT_MIN;
+            int fixed=position==0 ? 4 : position==1 ? 0 : 8;
+            if(kind==11) v.center_x=position==0 ? 0.5f : position==1 ? 4.5f : -3.5f;
+            else v.center_y=position==0 ? -0.5f : position==1 ? -4.5f : 3.5f;
+            c=plot(&f,v,r,4); canonicalize(&c);
+            ASSERT_EQ_INT(2,c.count);
+            for(i=0;i<c.count;i++) {
+                Segment s=c.segments[i];
+                int a=kind==11 ? s.y0 : s.x0, b=kind==11 ? s.y1 : s.x1;
+                ASSERT_EQ_INT(fixed,kind==11 ? s.x0 : s.y0);
+                ASSERT_EQ_INT(fixed,kind==11 ? s.x1 : s.y1);
+                if(i>0) ASSERT_TRUE(compare_segment(&c.segments[i-1],&s)!=0);
+                if(a<min) min=a;
+                if(b<min) min=b;
+                if(a>max) max=a;
+                if(b>max) max=b;
+            }
+            ASSERT_EQ_INT(0,min); ASSERT_EQ_INT(8,max);
+        }
+    }
+}
+
 void run_plot2d_tests(void) {
     printf("sizeof(Plot2DJob) host: %zu\n",sizeof(Plot2DJob));
     test_geometry_and_sign_invariance();
@@ -339,4 +389,6 @@ void run_plot2d_tests(void) {
     test_invalid_bands_and_poles();
     test_candidate_midpoint_failures();
     test_exact_zero_edges_and_extreme_clipping();
+    test_pole_between_vertical_edge_crossings();
+    test_zero_edge_uniqueness_and_boundary_ownership();
 }
