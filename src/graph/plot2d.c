@@ -93,11 +93,14 @@ static int16_t clipped_pixel(float value, int16_t min, int16_t length) {
     return (int16_t)pixel;
 }
 
-static void emit(const Plot2DJob *job, uint8_t column, Point a, Point b, float largest,
+static void emit(const Plot2DJob *job, uint8_t column, int16_t bottom,
+                  Point a, Point b, float largest,
                   Plot2DSampleFn sample, void *sample_user,
                   Plot2DSegmentFn segment, void *segment_user) {
     uint8_t i;
-    float interior_sign = 0, zero_tolerance = 8 * FLT_EPSILON * largest;
+    Point transverse_a = a, transverse_b = b, root;
+    bool opposite = true;
+    int16_t left = column_x(job, column), right = column_x(job, column+1);
     int16_t x0, y0, x1, y1;
     /* Shared zero edges belong to the cell above/left; outer edges still belong here. */
     if ((column > 0 && a.x == b.x && a.x == column_x(job, column)) ||
@@ -110,11 +113,21 @@ static void emit(const Plot2DJob *job, uint8_t column, Point a, Point b, float l
         if (!sample_at(job, interior, sample, sample_user, &value) ||
             (fabsf(value) > largest && fabsf(value) - largest > 8 * FLT_EPSILON * largest))
             return;
-        /* A one-branch chord cannot cross another meaningful zero or pole. */
-        if (fabsf(value) > zero_tolerance) {
-            if (interior_sign != 0 && (value > 0) != (interior_sign > 0)) return;
-            interior_sign = value;
-        }
+    }
+    /* A transverse root distinguishes a pole bracket from a smooth inflection. */
+    if ((a.x == left && b.x == right) || (b.x == left && a.x == right))
+        transverse_a.y = transverse_b.y = (a.y+b.y)*0.5f;
+    else if ((a.y == job->row_y && b.y == bottom) ||
+             (b.y == job->row_y && a.y == bottom))
+        transverse_a.x = transverse_b.x = (a.x+b.x)*0.5f;
+    else opposite = false;
+    if (opposite) {
+        float va, vb;
+        if (!sample_at(job, transverse_a, sample, sample_user, &va) ||
+            !sample_at(job, transverse_b, sample, sample_user, &vb)) return;
+        if (va != 0 && vb != 0 && (va > 0) != (vb > 0) &&
+            !crossing(job, transverse_a, transverse_b, va, vb, sample, sample_user, &root))
+            return;
     }
     x0 = clipped_pixel(a.x, job->rect.x, job->rect.width);
     x1 = clipped_pixel(b.x, job->rect.x, job->rect.width);
@@ -151,7 +164,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
     for (i = 0; i < 4; i++) {
         uint8_t next = (i+1) % 4;
         if (values[i] == 0 && values[next] == 0) {
-            emit(job, column, corners[i], corners[next], largest,
+            emit(job, column, bottom, corners[i], corners[next], largest,
                  sample, sample_user, segment, segment_user);
             zero_edges++;
             zero_edge = i;
@@ -167,7 +180,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
             points[1] = points[0];
             if (zero_edge % 2 == 0) points[1].y = corners[zero_edge].y;
             else points[1].x = corners[zero_edge].x;
-            emit(job, column, points[0], points[1], largest,
+            emit(job, column, bottom, points[0], points[1], largest,
                  sample, sample_user, segment, segment_user);
         }
         return;
@@ -181,7 +194,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
     }
     if (count == 2) {
         if (valid[edges[0]] && valid[edges[1]])
-            emit(job, column, points[edges[0]], points[edges[1]], largest,
+            emit(job, column, bottom, points[edges[0]], points[edges[1]], largest,
                  sample, sample_user, segment, segment_user);
     } else if (count == 4) {
         Point center = {(corners[0].x + corners[2].x)*0.5f,
@@ -194,7 +207,7 @@ static void cell(const Plot2DJob *job, uint8_t column, int16_t bottom,
         start = center_positive == positive[0] ? 0 : 1;
         for (i = 0; i < 2; i++) {
             uint8_t a = (start + 2*i) % 4, b = (a+1) % 4;
-            if (valid[a] && valid[b]) emit(job, column, points[a], points[b], largest,
+            if (valid[a] && valid[b]) emit(job, column, bottom, points[a], points[b], largest,
                                          sample, sample_user, segment, segment_user);
         }
     }
