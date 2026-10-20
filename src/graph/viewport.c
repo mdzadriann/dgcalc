@@ -36,8 +36,8 @@ void viewport2d_zoom(Viewport2D *viewport, float factor) {
 
     if (!isfinite(factor) || factor <= 0) return;
     scale = viewport->units_per_pixel * factor;
-    if (scale < 0.0001f) scale = 0.0001f;
-    if (scale > 10000.0f) scale = 10000.0f;
+    if (scale < VIEWPORT2D_MIN_SCALE) scale = VIEWPORT2D_MIN_SCALE;
+    if (scale > VIEWPORT2D_MAX_SCALE) scale = VIEWPORT2D_MAX_SCALE;
     viewport->units_per_pixel = scale;
 }
 

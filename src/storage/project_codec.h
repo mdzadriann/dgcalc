@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PROJECT_FORMAT_VERSION 1
+#define PROJECT_FORMAT_VERSION 2
 #define PROJECT_MAGIC "DGCE"
 #define PROJECT_MAX_BYTES                                                   \
-    (13 + 4 + PROJECT_MAX_EXPRESSIONS * (4 + 2 * (EDITOR_CAPACITY - 1)))
+    (13 + 16 + PROJECT_MAX_EXPRESSIONS * (4 + 2 * (EDITOR_CAPACITY - 1)))
 
 typedef enum {
     CODEC_OK,

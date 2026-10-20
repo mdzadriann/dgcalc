@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define VIEWPORT2D_MIN_SCALE 0.0001f
+#define VIEWPORT2D_MAX_SCALE 10000.0f
+
 typedef struct {
     float center_x;
     float center_y;

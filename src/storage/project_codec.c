@@ -3,10 +3,17 @@
 #include "math/parser.h"
 #include "math/validate.h"
 
+#include <float.h>
+#include <math.h>
 #include <string.h>
 
 #define CODEC_HEADER_BYTES 13u
-#define CODEC_METADATA_BYTES 4u
+#define CODEC_V1_METADATA_BYTES 4u
+#define CODEC_V2_METADATA_BYTES 16u
+
+_Static_assert(sizeof(float) == sizeof(uint32_t) && FLT_RADIX == 2 &&
+                   FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
+               "Saved viewports require IEEE-754 binary32 floats");
 
 static AstArena validation_arena;
 static char source_scratch[EDITOR_CAPACITY];
@@ -53,6 +60,26 @@ static uint32_t read_u32(const uint8_t *source) {
            ((uint32_t)source[3] << 24);
 }
 
+static void write_float(uint8_t *destination, float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    write_u32(destination, bits);
+}
+
+static float read_float(const uint8_t *source) {
+    uint32_t bits = read_u32(source);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static bool valid_viewport(const Viewport2D *viewport) {
+    return isfinite(viewport->center_x) && isfinite(viewport->center_y) &&
+           isfinite(viewport->units_per_pixel) &&
+           viewport->units_per_pixel >= VIEWPORT2D_MIN_SCALE &&
+           viewport->units_per_pixel <= VIEWPORT2D_MAX_SCALE;
+}
+
 uint32_t project_crc32(const uint8_t *data, size_t length) {
     uint32_t crc = UINT32_MAX;
     size_t index;
@@ -72,7 +99,16 @@ static bool valid_state(const AppState *state, const Project *project) {
     return state->mode <= GRAPH_MODE_3D &&
            state->view <= APP_VIEW_GRAPH &&
            state->selected_expression < PROJECT_MAX_EXPRESSIONS &&
-           project->count <= PROJECT_MAX_EXPRESSIONS;
+           project->count <= PROJECT_MAX_EXPRESSIONS &&
+           valid_viewport(&state->viewport);
+}
+
+static const char *saved_draft(const AppState *state, const Project *project,
+                               uint8_t index) {
+    return index == state->selected_expression &&
+                   index == project_editing_index(project)
+               ? project_line_display_text(project, index)
+               : project_line_source(project, index);
 }
 
 size_t project_encode(const AppState *state,
@@ -82,7 +118,7 @@ size_t project_encode(const AppState *state,
                       CodecError *error) {
     size_t committed_lengths[PROJECT_MAX_EXPRESSIONS];
     size_t draft_lengths[PROJECT_MAX_EXPRESSIONS];
-    size_t needed = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
+    size_t needed = CODEC_HEADER_BYTES + CODEC_V2_METADATA_BYTES;
     size_t offset;
     uint8_t index;
 
@@ -96,7 +132,7 @@ size_t project_encode(const AppState *state,
         size_t draft;
 
         if (!text_length(project_line_source(project, index), &committed) ||
-            !text_length(project_line_display_text(project, index), &draft)) {
+            !text_length(saved_draft(state, project, index), &draft)) {
             set_error(error, CODEC_ERR_CONTENT);
             return 0;
         }
@@ -117,6 +153,12 @@ size_t project_encode(const AppState *state,
     output[offset++] = (uint8_t)state->view;
     output[offset++] = state->selected_expression;
     output[offset++] = project->count;
+    write_float(&output[offset], state->viewport.center_x);
+    offset += 4;
+    write_float(&output[offset], state->viewport.center_y);
+    offset += 4;
+    write_float(&output[offset], state->viewport.units_per_pixel);
+    offset += 4;
 
     for (index = 0; index < project->count; index++) {
         size_t committed = committed_lengths[index];
@@ -128,7 +170,7 @@ size_t project_encode(const AppState *state,
         offset += committed;
         write_u16(&output[offset], (uint16_t)draft);
         offset += 2;
-        memcpy(&output[offset], project_line_display_text(project, index), draft);
+        memcpy(&output[offset], saved_draft(state, project, index), draft);
         offset += draft;
     }
 
@@ -179,9 +221,9 @@ static bool validate_source(const uint8_t *data,
 
 static bool validate_payload(const uint8_t *input,
                              size_t length,
+                             size_t offset,
                              uint8_t count,
                              CodecError *error) {
-    size_t offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
     uint32_t scalar_definitions = 0;
     uint32_t function_definitions = 0;
     uint8_t index;
@@ -261,6 +303,8 @@ typedef struct {
     uint8_t view;
     uint8_t selected;
     uint8_t count;
+    size_t bytes;
+    Viewport2D viewport;
 } CodecMetadata;
 
 static bool validate_document(const uint8_t *input,
@@ -277,15 +321,18 @@ static bool validate_document(const uint8_t *input,
         set_error(error, CODEC_ERR_MAGIC);
         return false;
     }
-    if (input[4] != PROJECT_FORMAT_VERSION) {
+    if (input[4] != 1 && input[4] != PROJECT_FORMAT_VERSION) {
         set_error(error, CODEC_ERR_VERSION);
         return false;
     }
+    metadata->bytes = input[4] == 1 ? CODEC_V1_METADATA_BYTES
+                                   : CODEC_V2_METADATA_BYTES;
 
     payload_length = read_u32(&input[5]);
-    if (payload_length > PROJECT_MAX_BYTES - CODEC_HEADER_BYTES ||
+    if (payload_length > PROJECT_MAX_BYTES - CODEC_HEADER_BYTES -
+                             CODEC_V2_METADATA_BYTES + metadata->bytes ||
         (size_t)payload_length + CODEC_HEADER_BYTES != length ||
-        payload_length < CODEC_METADATA_BYTES) {
+        payload_length < metadata->bytes) {
         set_error(error, CODEC_ERR_LENGTH);
         return false;
     }
@@ -299,13 +346,21 @@ static bool validate_document(const uint8_t *input,
     metadata->view = input[14];
     metadata->selected = input[15];
     metadata->count = input[16];
+    viewport2d_init(&metadata->viewport);
+    if (input[4] == PROJECT_FORMAT_VERSION) {
+        metadata->viewport.center_x = read_float(&input[17]);
+        metadata->viewport.center_y = read_float(&input[21]);
+        metadata->viewport.units_per_pixel = read_float(&input[25]);
+    }
     if (metadata->mode > GRAPH_MODE_3D || metadata->view > APP_VIEW_GRAPH ||
         metadata->selected >= PROJECT_MAX_EXPRESSIONS ||
-        metadata->count > PROJECT_MAX_EXPRESSIONS) {
+        metadata->count > PROJECT_MAX_EXPRESSIONS ||
+        !valid_viewport(&metadata->viewport)) {
         set_error(error, CODEC_ERR_CONTENT);
         return false;
     }
-    if (!validate_payload(input, length, metadata->count, error)) {
+    if (!validate_payload(input, length, CODEC_HEADER_BYTES + metadata->bytes,
+                          metadata->count, error)) {
         return false;
     }
     set_error(error, CODEC_OK);
@@ -326,6 +381,7 @@ bool project_decode(AppState *state_destination,
                     CodecError *error) {
     CodecMetadata metadata;
     Project staging;
+    AppState staging_state;
     size_t offset;
     uint8_t index;
 
@@ -335,7 +391,12 @@ bool project_decode(AppState *state_destination,
     }
 
     project_init_with_memory(&staging, project_destination->memory);
-    offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
+    app_state_init(&staging_state);
+    staging_state.mode = (GraphMode)metadata.mode;
+    staging_state.view = (AppView)metadata.view;
+    staging_state.selected_expression = metadata.selected;
+    staging_state.viewport = metadata.viewport;
+    offset = CODEC_HEADER_BYTES + metadata.bytes;
     for (index = 0; index < metadata.count; index++) {
         uint16_t committed = read_u16(&input[offset]);
         uint16_t draft;
@@ -360,7 +421,7 @@ bool project_decode(AppState *state_destination,
 
     staging.count = metadata.count;
     staging.dirty = false;
-    offset = CODEC_HEADER_BYTES + CODEC_METADATA_BYTES;
+    offset = CODEC_HEADER_BYTES + metadata.bytes;
     for (index = 0; index < metadata.count; index++) {
         uint16_t committed = read_u16(&input[offset]);
         uint16_t draft;
@@ -381,9 +442,7 @@ bool project_decode(AppState *state_destination,
     staging.count = metadata.count;
     staging.dirty = false;
     project_replace(project_destination, &staging);
-    state_destination->mode = (GraphMode)metadata.mode;
-    state_destination->view = (AppView)metadata.view;
-    state_destination->selected_expression = metadata.selected;
+    *state_destination = staging_state;
     set_error(error, CODEC_OK);
     return true;
 }
