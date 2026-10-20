@@ -358,12 +358,13 @@ bool project_clear_line(Project *project, uint8_t index) {
     }
 
     if (line->payload != NULL) {
+        if (project_editing_index(project) == index) {
+            project->dirty_before_edit = true;
+        }
         project->memory.release(line->payload);
     }
     memset(line, 0, sizeof(*line));
     if (project_editing_index(project) == index) {
-        project->editing = false;
-        project->editing_index = PROJECT_MAX_EXPRESSIONS;
         editor_init(&project->editor);
     }
     line->root = AST_NONE;

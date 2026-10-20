@@ -240,6 +240,72 @@ static EvalError circle_coordinates(void *user, const char *name, float *value) 
     return EVAL_OK;
 }
 
+static void test_clear_keeps_the_shared_editor_active_without_retaining_payloads(void) {
+    Project project;
+    unsigned finish;
+
+    for (finish = 0; finish < 3; finish++) {
+        EditorBuffer *editor;
+        project_init_with_memory(&project, counting_memory());
+        project_set_and_commit(&project, 0, "a=2");
+        project_set_and_commit(&project, 1, "b=a+3");
+        project.dirty = false;
+        ASSERT_TRUE(project_begin_edit(&project, 0));
+        editor = project_editor(&project);
+        ASSERT_TRUE(project_clear_line(&project, 0));
+        ASSERT_TRUE(project_is_editing(&project));
+        ASSERT_EQ_INT(0, project_editing_index(&project));
+        ASSERT_TRUE(editor == project_editor(&project));
+        ASSERT_STR_EQ("", project_line_source(&project, 0));
+        ASSERT_STR_EQ("", project_line_display_text(&project, 0));
+        ASSERT_EQ_INT(0, editor->length);
+        ASSERT_EQ_INT(0, editor->cursor);
+        ASSERT_EQ_INT(EXPRESSION_EMPTY, project_line_status(&project, 0));
+        ASSERT_EQ_INT(EXPRESSION_UNDEFINED, project_line_status(&project, 1));
+        ASSERT_EQ_INT(0, project.dependencies.dependencies[1]);
+        ASSERT_EQ_INT(1, memory_live);
+        ASSERT_EQ_INT(memory_bytes, project_payload_bytes(&project));
+        ASSERT_EQ_INT(2, project.count);
+        ASSERT_TRUE(project.dirty);
+
+        if (finish == 0) {
+            project_cancel_edit(&project);
+            ASSERT_FALSE(project_line_has_committed(&project, 0));
+            ASSERT_STR_EQ("", project_line_display_text(&project, 0));
+            ASSERT_EQ_INT(EXPRESSION_EMPTY, project_line_status(&project, 0));
+            ASSERT_EQ_INT(EXPRESSION_UNDEFINED, project_line_status(&project, 1));
+            ASSERT_TRUE(project.dirty);
+            ASSERT_EQ_INT(1, memory_live);
+        } else {
+            if (finish == 1 && project_editor(&project) != NULL) {
+                ASSERT_TRUE(editor_insert(project_editor(&project), '4'));
+            }
+            ASSERT_TRUE(project_commit_line(&project, 0).ok);
+            ASSERT_STR_EQ(finish == 1 ? "4" : "", project_line_source(&project, 0));
+            ASSERT_EQ_INT(finish == 1 ? 2 : 1, memory_live);
+        }
+        ASSERT_FALSE(project_is_editing(&project));
+        ASSERT_TRUE(project_editor(&project) == NULL);
+        ASSERT_EQ_INT(2, project.count);
+        ASSERT_TRUE(project.dirty);
+        project_dispose(&project);
+        ASSERT_EQ_INT(0, memory_live);
+        ASSERT_EQ_INT(0, memory_bytes);
+    }
+
+    project_init_with_memory(&project, counting_memory());
+    ASSERT_TRUE(project_begin_edit(&project, 15));
+    ASSERT_TRUE(project_set_draft(&project, 15, "x+"));
+    ASSERT_TRUE(project_clear_line(&project, 15));
+    ASSERT_TRUE(project_is_editing(&project));
+    project_cancel_edit(&project);
+    ASSERT_EQ_INT(0, project.count);
+    ASSERT_FALSE(project.dirty);
+    ASSERT_EQ_INT(0, memory_live);
+    project_dispose(&project);
+    ASSERT_EQ_INT(0, memory_bytes);
+}
+
 static void test_sparse_payloads_allocate_once_and_release_on_clear(void) {
     static const char *const sources[] = {
         "y=x", "x=2", "x=y^2", "x^2+y^2=25", "9x^2+4y^2=36"
@@ -366,6 +432,7 @@ static void test_replacement_moves_ownership_and_disposes_destination_once(void)
 }
 
 void run_project_tests(void) {
+    test_clear_keeps_the_shared_editor_active_without_retaining_payloads();
     test_sparse_payloads_allocate_once_and_release_on_clear();
     test_allocation_failure_preserves_committed_tree_and_dependencies();
     test_replacement_moves_ownership_and_disposes_destination_once();
