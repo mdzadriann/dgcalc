@@ -114,7 +114,7 @@ static void observe_render(ProjectPlot2D *job, const Project *project, Capture *
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, result);
 }
 
-static void test_mixed_slots_and_invalid_committed_draft(void) {
+static void test_mixed_slots_render_retained_equation_with_invalid_draft_visible(void) {
     Project project;
     ProjectPlot2D job;
     Capture c = {.rect = rectangle};
@@ -135,18 +135,20 @@ static void test_mixed_slots_and_invalid_committed_draft(void) {
     ASSERT_TRUE(project_set_draft(&project, 14, "y="));
     ASSERT_FALSE(project_validate_draft(&project, 14).ok);
     ASSERT_TRUE(project_line_has_committed(&project, 14));
-    ASSERT_FALSE(project_line_is_drawable_2d(&project, 14));
+    ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 14));
+    ASSERT_STR_EQ("y=", project_line_display_text(&project, 14));
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 14));
     project_plot2d_begin(&job, viewport, rectangle, 4);
-    ASSERT_EQ_INT(13, render(&job, &project, &c));
+    ASSERT_EQ_INT(19, render(&job, &project, &c));
     for (i = 0; i < PROJECT_MAX_EXPRESSIONS; i++) {
-        if (i == 2 || i == 11) ASSERT_TRUE(c.counts[i] > 0);
+        if (i == 2 || i == 11 || i == 14) ASSERT_TRUE(c.counts[i] > 0);
         else ASSERT_EQ_INT(0, c.counts[i]);
     }
     c = (Capture){.rect = rectangle};
     observe_render(&job, &project, &c);
-    ASSERT_EQ_INT(12, row_calls);
+    ASSERT_EQ_INT(18, row_calls);
     for (i = 0; i < PROJECT_MAX_EXPRESSIONS; i++) {
-        if (i == 2 || i == 11) ASSERT_TRUE(sampled[i] > 0);
+        if (i == 2 || i == 11 || i == 14) ASSERT_TRUE(sampled[i] > 0);
         else ASSERT_EQ_INT(0, sampled[i]);
     }
     project_dispose(&project);
@@ -335,7 +337,7 @@ static void test_invalid_inputs_cancel_and_restart(void) {
 }
 
 void run_project_plot2d_tests(void) {
-    test_mixed_slots_and_invalid_committed_draft();
+    test_mixed_slots_render_retained_equation_with_invalid_draft_visible();
     test_zero_five_and_sixteen_lines_reuse_fixed_memory();
     test_one_underlying_row_per_call_and_no_sampling_skipped_slots();
     test_sample_errors_leave_gaps_and_continue_to_later_equations();

@@ -44,9 +44,9 @@ Version 1 projects load with the default viewport; version 2 saves preserve expr
 - CEdev: v15.0, eZ80 Clang 19.1.0
 - arTIfiCE Shell target: 2.1
 - Calculator OS version: pending physical-calculator check
-- Program size: 46,412-byte private `.8xp` (Milestone 2A development build)
+- Program size: 46,532-byte private `.8xp` (Milestone 2A development build)
 - CE static render controller: 850 bytes, including one 846-byte project scheduler (from generated assembly); total linked BSS: 13,390 bytes
-- Host checks: 54,552 checks, zero failures; CE build has no C warnings and only the two known GNU-stack linker warnings
+- Host checks: 55,032 checks, zero failures; CE build has no C warnings and only the two known GNU-stack linker warnings
 - Physical speed, RAM, appearance, and calculator OS version remain pending; automated checks do not establish those measurements
 
 ## Pending private calculator checks

@@ -656,9 +656,15 @@ EvalResult project_evaluate_line(Project *project, uint8_t index) {
 bool project_line_is_drawable_2d(const Project *project, uint8_t index) {
     AstView tree;
     AstId root;
+    ExpressionStatus status;
 
-    return project != NULL &&
-           project_line_status(project, index) == EXPRESSION_VALID &&
+    if (project == NULL) return false;
+    status = project_line_status(project, index);
+    if (project_editing_index(project) == index &&
+        project_line_has_committed(project, index) &&
+        line_has_draft_error(&project->lines[index]))
+        status = project->status_before_edit;
+    return status == EXPRESSION_VALID &&
            project_line_role(project, index) == EXPR_ROLE_RELATION_2D &&
            project_line_tree(project, index, &tree, &root) &&
            tree.nodes != NULL && root < tree.count &&

@@ -495,7 +495,7 @@ static void test_2d_resolution_uses_locals_then_coordinates_then_definitions(voi
     project_dispose(&project);
 }
 
-static void test_2d_boundary_skips_non_drawable_and_invalid_drafts(void) {
+static void test_2d_boundary_preserves_committed_graphs_during_invalid_drafts(void) {
     static const char *const skipped[] = {
         "2+3", "a=2", "f(t)=t^2", "y<x", "y<=x", "y>x", "y>=x",
         "x+y+z=1", "y=q", "b=c", "c=b", "y=b"
@@ -526,18 +526,36 @@ static void test_2d_boundary_skips_non_drawable_and_invalid_drafts(void) {
     ASSERT_FALSE(project_line_is_drawable_2d(NULL, 0));
     ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(NULL, 0, 2, 2).error);
 
+    for (index = 0; index <= sizeof(skipped) / sizeof(skipped[0]); index++) {
+        ASSERT_TRUE(project_set_draft(&project, (uint8_t)index, "y="));
+        ASSERT_FALSE(project_commit_line(&project, (uint8_t)index).ok);
+        ASSERT_FALSE(project_line_is_drawable_2d(&project, (uint8_t)index));
+        ASSERT_EQ_INT(EVAL_ERR_UNDEFINED,
+                      project_evaluate_2d(&project, (uint8_t)index, 2, 2).error);
+        project_cancel_edit(&project);
+    }
+
     project_set_and_commit(&project, 15, "y=x");
     ASSERT_TRUE(project_set_draft(&project, 15, "y="));
     ASSERT_FALSE(project_validate_draft(&project, 15).ok);
+    ASSERT_FALSE(project_commit_line(&project, 15).ok);
     ASSERT_TRUE(project_line_has_committed(&project, 15));
-    ASSERT_FALSE(project_line_is_drawable_2d(&project, 15));
-    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(&project, 15, 2, 2).error);
+    ASSERT_TRUE(project_is_editing(&project));
+    ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 15));
+    ASSERT_STR_EQ("y=", project_line_display_text(&project, 15));
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 15, 2, 2).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 15, 2, 2).value);
     project_cancel_edit(&project);
     ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
     ASSERT_TRUE(project_set_draft(&project, 15, "1=1"));
     ASSERT_FALSE(project_commit_line(&project, 15).ok);
-    ASSERT_FALSE(project_line_is_drawable_2d(&project, 15));
-    ASSERT_EQ_INT(EVAL_ERR_UNDEFINED, project_evaluate_2d(&project, 15, 2, 2).error);
+    ASSERT_TRUE(project_is_editing(&project));
+    ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 15));
+    ASSERT_STR_EQ("1=1", project_line_display_text(&project, 15));
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 15, 2, 2).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 15, 2, 2).value);
     project_dispose(&project);
 }
 
@@ -625,7 +643,7 @@ static void test_2d_sampling_does_not_allocate_or_mutate_project(void) {
 void run_project_tests(void) {
     test_2d_equalities_return_signed_residuals();
     test_2d_resolution_uses_locals_then_coordinates_then_definitions();
-    test_2d_boundary_skips_non_drawable_and_invalid_drafts();
+    test_2d_boundary_preserves_committed_graphs_during_invalid_drafts();
     test_2d_evaluation_propagates_sample_errors();
     test_2d_sampling_does_not_allocate_or_mutate_project();
     test_clear_keeps_the_shared_editor_active_without_retaining_payloads();
