@@ -1,4 +1,5 @@
 #include "platform/ce/ce_ui.h"
+#include "platform/ce/ce_input.h"
 #include "graph/project_plot2d.h"
 
 #include <graphx.h>
@@ -26,6 +27,7 @@ static enum { RENDER_IDLE, RENDER_COARSE, RENDER_WAIT, RENDER_FINE } render_phas
 static bool render_editing;
 static CeRenderStatus render_status;
 static uint32_t render_generation, job_generation;
+static const uint8_t slot_colors[] = {COLOR_BLUE, COLOR_RED, COLOR_GREEN};
 
 static void configure_palette(void) {
     gfx_palette[COLOR_BACKGROUND] = gfx_RGBTo1555(248, 249, 250);
@@ -80,10 +82,10 @@ static void draw_render_header(void) {
         case CE_RENDER_FINE: label = "3/3 Refining"; break;
         case CE_RENDER_PREVIEW:
             label = render_status.manual_reload_required
-                        ? "Canceled - preview only" : "2/3 Preview";
+                        ? "Canceled - GRAPH/WINDOW to load" : "2/3 Preview";
             break;
-        case CE_RENDER_CANCELED: label = "Canceled - not loaded"; break;
-        case CE_RENDER_OUT_OF_DATE: label = "Out of date - press GRAPH/WINDOW"; break;
+        case CE_RENDER_CANCELED: label = "Canceled - GRAPH/WINDOW to load"; break;
+        case CE_RENDER_OUT_OF_DATE: label = "Out of date - GRAPH/WINDOW to load"; break;
         case CE_RENDER_ERROR: label = "Unable to load"; break;
         default: label = "Current"; break;
     }
@@ -98,7 +100,8 @@ static void draw_render_header(void) {
         gfx_SetTextXY(190, 2);
         gfx_PrintUInt(render_status.total, 1);
     }
-    if (render_phase == RENDER_WAIT || render_phase == RENDER_FINE)
+    if (render_phase == RENDER_WAIT || render_phase == RENDER_FINE ||
+        render_status.state == CE_RENDER_PREVIEW)
         gfx_PrintStringXY("Preview", 6, 13);
     if (active) gfx_PrintStringXY("DEL: Cancel", 226, 13);
 }
@@ -192,6 +195,15 @@ static void draw_expression_list(const AppState *state,
         gfx_SetTextFGColor(COLOR_MUTED);
         gfx_SetTextXY(7, y + 2);
         gfx_PrintUInt((unsigned int)index + 1, index >= 9 ? 2 : 1);
+        if (project_line_role(project, index) == EXPR_ROLE_RELATION_2D ||
+            project_line_role(project, index) == EXPR_ROLE_RELATION_3D) {
+            gfx_SetColor(slot_colors[index % sizeof(slot_colors)]);
+            gfx_FillRectangle_NoClip(20, y + 3, 5, 5);
+            if (!project_line_is_visible(project, index)) {
+                gfx_SetColor(COLOR_PANEL);
+                gfx_FillRectangle_NoClip(21, y + 4, 3, 3);
+            }
+        }
         gfx_SetTextFGColor(COLOR_TEXT);
         characters = width > 200 ? (error[0] == '\0' ? 34 : 25)
                                  : (error[0] == '\0' ? 12 : 10);
@@ -414,9 +426,8 @@ static bool any_key_down(void) {
 
 static void draw_segment(void *user, uint8_t index, int16_t x0, int16_t y0,
                           int16_t x1, int16_t y1) {
-    static const uint8_t colors[] = {COLOR_BLUE, COLOR_RED, COLOR_GREEN};
     if (*(const uint32_t *)user != render_generation) return;
-    gfx_SetColor(colors[index % sizeof(colors)]);
+    gfx_SetColor(slot_colors[index % sizeof(slot_colors)]);
     gfx_Line(x0, y0, x1, y1);
 }
 
@@ -478,6 +489,7 @@ static void wait_for_release(void) {
     do {
         kb_Scan();
     } while (any_key_down());
+    ce_input_discard_pending();
     kb_SetMode(MODE_3_CONTINUOUS);
 }
 
@@ -523,6 +535,11 @@ static void draw_dialog(const char *title,
     int height = 38 + count * 18;
     int top = (240 - height) / 2;
 
+    /* Dialog blits overwrite the unfinished frame; only an explicit cancel latches. */
+    render_generation++;
+    project_plot2d_cancel(&render_job);
+    render_phase = RENDER_IDLE;
+    ce_input_discard_pending();
     gfx_BlitScreen();
     gfx_SetColor(COLOR_PANEL);
     gfx_FillRectangle_NoClip(55, top, 210, height);

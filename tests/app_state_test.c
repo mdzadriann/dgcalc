@@ -105,6 +105,24 @@ static void test_graph_actions_only_move_viewport_and_preserve_project(void) {
 }
 
 void run_app_state_tests(void) {
+    static const AppAction changing[] = {
+        APP_ACTION_PAN_LEFT, APP_ACTION_PAN_RIGHT, APP_ACTION_PAN_UP,
+        APP_ACTION_PAN_DOWN, APP_ACTION_ZOOM_IN, APP_ACTION_ZOOM_OUT,
+        APP_ACTION_TOGGLE_GRAPH_MODE, APP_ACTION_COMMIT_EDIT,
+        APP_ACTION_CLEAR_EXPRESSION, APP_ACTION_LOAD_PROJECT,
+        APP_ACTION_NEW_PROJECT, APP_ACTION_TOGGLE_VISIBILITY
+    };
+    AppAction action;
+    size_t i;
+    for (action = APP_ACTION_NONE; action <= APP_ACTION_QUIT; action++) {
+        bool expected = false;
+        AppState state;
+        for (i = 0; i < sizeof(changing) / sizeof(changing[0]); i++)
+            if (action == changing[i]) expected = true;
+        ASSERT_EQ_INT(expected, app_action_changes_graph(action));
+        app_state_init(&state);
+        ASSERT_EQ_INT(action != APP_ACTION_QUIT, app_handle_action(&state, action));
+    }
     test_graph_actions_only_move_viewport_and_preserve_project();
     test_app_state_defaults_to_expressions_2d();
     test_view_actions_preserve_mode();

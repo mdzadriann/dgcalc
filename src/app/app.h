@@ -39,6 +39,8 @@ typedef enum {
     APP_ACTION_LOAD_PROJECT,
     APP_ACTION_TOGGLE_GRAPH_MODE,
     APP_ACTION_OPEN_MENU,
+    APP_ACTION_TOGGLE_VISIBILITY,
+    APP_ACTION_CANCEL_RENDER,
     APP_ACTION_QUIT
 } AppAction;
 
@@ -51,5 +53,6 @@ typedef struct {
 
 void app_state_init(AppState *state);
 bool app_handle_action(AppState *state, AppAction action);
+bool app_action_changes_graph(AppAction action);
 
 #endif

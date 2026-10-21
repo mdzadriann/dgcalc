@@ -1,5 +1,25 @@
 #include "app/app.h"
 
+bool app_action_changes_graph(AppAction action) {
+    switch (action) {
+        case APP_ACTION_PAN_LEFT:
+        case APP_ACTION_PAN_RIGHT:
+        case APP_ACTION_PAN_UP:
+        case APP_ACTION_PAN_DOWN:
+        case APP_ACTION_ZOOM_IN:
+        case APP_ACTION_ZOOM_OUT:
+        case APP_ACTION_TOGGLE_GRAPH_MODE:
+        case APP_ACTION_COMMIT_EDIT:
+        case APP_ACTION_CLEAR_EXPRESSION:
+        case APP_ACTION_LOAD_PROJECT:
+        case APP_ACTION_NEW_PROJECT:
+        case APP_ACTION_TOGGLE_VISIBILITY:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void app_state_init(AppState *state) {
     state->view = APP_VIEW_EXPRESSIONS;
     state->mode = GRAPH_MODE_2D;
@@ -59,6 +79,8 @@ bool app_handle_action(AppState *state, AppAction action) {
         case APP_ACTION_SAVE_PROJECT:
         case APP_ACTION_LOAD_PROJECT:
         case APP_ACTION_OPEN_MENU:
+        case APP_ACTION_TOGGLE_VISIBILITY:
+        case APP_ACTION_CANCEL_RENDER:
             break;
     }
 

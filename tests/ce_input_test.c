@@ -286,7 +286,7 @@ static void test_navigation_matrix_and_hidden_editor_safety(void) {
             ASSERT_STR_EQ("x+1", editor.text);
             ASSERT_EQ_INT(3, editor.cursor);
         }
-        ASSERT_EQ_INT(APP_ACTION_NONE,
+        ASSERT_EQ_INT(editing ? APP_ACTION_NONE : APP_ACTION_CANCEL_RENDER,
                       press(kb_KeyDel, &editor, editing, APP_VIEW_GRAPH));
         ASSERT_EQ_INT(APP_ACTION_NONE,
                       press(kb_Key1, &editor, editing, APP_VIEW_GRAPH));
@@ -451,6 +451,13 @@ static void test_modal_menu_consumes_navigation_without_moving_background(void) 
     ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_GRAPH));
     ASSERT_STR_EQ("x+1", editor.text);
     ASSERT_EQ_INT(MODE_3_CONTINUOUS, kb_GetMode());
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_SPLIT);
+    ASSERT_STR_EQ("x+1x", editor.text);
+    script_keys(keys, sizeof(keys) / sizeof(keys[0]));
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_ui_show_menu());
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_SPLIT));
+    ASSERT_STR_EQ("x+1x", editor.text);
     ce_input_end();
 }
 
@@ -484,6 +491,25 @@ static void test_second_trig_keys_insert_inverse_names_and_consume_modifier(void
 }
 
 void run_ce_input_tests(void) {
+    AppView view;
+    for (view = APP_VIEW_EXPRESSIONS; view <= APP_VIEW_GRAPH; view++) {
+        EditorBuffer editor;
+        reset_fake_hardware();
+        ce_input_begin();
+        editor_init(&editor);
+        ASSERT_TRUE(editor_set_text(&editor, "x=1"));
+        hold_keys(kb_Key2nd, kb_KeyEnter);
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(NULL, false, view));
+        ASSERT_EQ_INT(APP_ACTION_TOGGLE_VISIBILITY, ce_input_poll(NULL, false, view));
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(NULL, false, view));
+        ASSERT_EQ_INT(APP_ACTION_CANCEL_RENDER, press(kb_KeyDel, NULL, false, view));
+        (void)press(kb_Key2nd, &editor, true, view);
+        ASSERT_EQ_INT(APP_ACTION_NONE, press(kb_KeyEnter, &editor, true, view));
+        ASSERT_STR_EQ("x=1", editor.text);
+        (void)press(kb_KeyDel, &editor, true, view);
+        ASSERT_STR_EQ(view == APP_VIEW_GRAPH ? "x=1" : "x=", editor.text);
+        ce_input_end();
+    }
     test_second_trig_keys_insert_inverse_names_and_consume_modifier();
     test_math_cycles_complete_relations_at_each_caret_position();
     test_math_inserts_locally_and_rejects_invalid_clusters();

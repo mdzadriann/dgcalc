@@ -490,7 +490,8 @@ static void test_cancel_preserves_only_completed_coarse_geometry(void) {
         ce_ui_refresh(&state, &project, false);
         assert_status(phase ? CE_RENDER_PREVIEW : CE_RENDER_CANCELED,
                       phase == 1 ? 1 : 0, 1, true);
-        ASSERT_TRUE(visible_header_has(phase ? "Canceled - preview only" : "Canceled - not loaded"));
+        ASSERT_TRUE(visible_header_has("Canceled - GRAPH/WINDOW to load"));
+        ASSERT_EQ_INT(phase != 0, visible_header_has("Preview"));
         ASSERT_FALSE(visible_header_has("DEL: Cancel"));
         for (row = 0; row < 110; row++)
             ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
@@ -638,6 +639,39 @@ static void test_obsolete_generation_cannot_draw_or_swap(void) {
 }
 
 void run_ce_ui_tests(void) {
+    {
+        static const kb_lkey_t close_keys[] = {0, kb_KeyClear, 0};
+        AppState state;
+        Project project;
+        unsigned buffer;
+        reset_fake_hardware();
+        ce_ui_begin();
+        app_state_init(&state);
+        state.view = APP_VIEW_SPLIT;
+        project_init(&project);
+        commit_graph_line(&project, 0, "x=2");
+        commit_graph_line(&project, 1, "y=3");
+        commit_graph_line(&project, 2, "a=2");
+        commit_graph_line(&project, 3, "4");
+        ce_ui_draw(&state, &project, false, true);
+        for (buffer = 0; buffer < 2; buffer++) {
+            ASSERT_EQ_INT(COLOR_BLUE, buffer_pixels[buffer][34][21]);
+            ASSERT_EQ_INT(COLOR_RED, buffer_pixels[buffer][57][21]);
+            ASSERT_EQ_INT(COLOR_PANEL, buffer_pixels[buffer][80][21]);
+            ASSERT_EQ_INT(COLOR_PANEL, buffer_pixels[buffer][103][21]);
+        }
+        ASSERT_TRUE(project_toggle_line_visibility(&project, 0));
+        ce_ui_refresh(&state, &project, false);
+        for (buffer = 0; buffer < 2; buffer++) {
+            ASSERT_EQ_INT(COLOR_BLUE, buffer_pixels[buffer][33][20]);
+            ASSERT_EQ_INT(COLOR_PANEL, buffer_pixels[buffer][34][21]);
+        }
+        script_keys(close_keys, 3);
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_ui_show_menu());
+        ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+        ASSERT_FALSE(ce_ui_render_status().manual_reload_required);
+        project_dispose(&project);
+    }
     test_obsolete_generation_cannot_draw_or_swap();
     test_render_status_tracks_passes_and_equations();
     test_cancel_preserves_only_completed_coarse_geometry();

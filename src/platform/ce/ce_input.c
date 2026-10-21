@@ -250,6 +250,11 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing, AppView view)
         ce_input_discard_pending();
         return APP_ACTION_SHOW_GRAPH;
     }
+    if (!editing && (key == kb_KeyDel || (second_latched && key == kb_KeyEnter))) {
+        alpha_latched = false;
+        second_latched = false;
+        return key == kb_KeyDel ? APP_ACTION_CANCEL_RENDER : APP_ACTION_TOGGLE_VISIBILITY;
+    }
     if (view == APP_VIEW_GRAPH) {
         alpha_latched = false;
         second_latched = false;
