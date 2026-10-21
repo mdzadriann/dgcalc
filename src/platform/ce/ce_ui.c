@@ -111,7 +111,7 @@ static void draw_render_header(void) {
     if (render_phase == RENDER_WAIT || render_phase == RENDER_FINE ||
         render_status.state == CE_RENDER_PREVIEW)
         gfx_PrintStringXY("Preview", 6, 13);
-    if (active) gfx_PrintStringXY("DEL: Cancel", 226, 13);
+    if (active && !render_editing) gfx_PrintStringXY("DEL: Cancel", 226, 13);
 }
 
 static void refresh_render_header(void) {

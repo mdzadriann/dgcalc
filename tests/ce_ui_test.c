@@ -560,6 +560,38 @@ static void test_refresh_mirrors_ui_without_restarting_rows(void) {
     project_dispose(&project);
 }
 
+static void test_cancel_hint_tracks_editing_without_restarting_render(void) {
+    AppState state;
+    Project project;
+    uint32_t generation;
+    int phase, buffer;
+    reset_fake_hardware();
+    ce_ui_begin();
+    app_state_init(&state);
+    state.view = APP_VIEW_SPLIT;
+    project_init(&project);
+    commit_graph_line(&project, 0, "x=2");
+    ce_ui_draw(&state, &project, false, true);
+    ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+    generation = render_generation;
+    for (phase = 0; phase < 3; phase++) {
+        int16_t row = render_job.job.row_y;
+        bool editing = phase == 1;
+        if (editing) ASSERT_TRUE(project_begin_edit(&project, 0));
+        else project_cancel_edit(&project);
+        ce_ui_refresh(&state, &project, project_is_editing(&project));
+        for (buffer = 0; buffer < 2; buffer++)
+            ASSERT_EQ_INT(!editing,
+                          strstr(header_text[buffer][1], "DEL: Cancel") != NULL);
+        ASSERT_EQ_INT(generation, render_generation);
+        ASSERT_EQ_INT(row, render_job.job.row_y);
+        ASSERT_EQ_INT(CE_RENDER_COARSE, ce_ui_render_status().state);
+        ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+        ASSERT_TRUE(render_job.job.row_y > row);
+    }
+    project_dispose(&project);
+}
+
 /* Catches empty work spinning, failed startup reported current, and stale swaps. */
 static void test_empty_error_and_replaced_generations(void) {
     AppState state;
@@ -853,6 +885,7 @@ static void test_diagnostics_preserves_freshness_and_excludes_wait_time(void) {
 }
 
 void run_ce_ui_tests(void) {
+    test_cancel_hint_tracks_editing_without_restarting_render();
     test_diagnostics_forwards_quit_and_preserves_dismissals();
     test_diagnostics_saturates_counts_and_prints_full_clock_values();
     test_diagnostics_preserves_freshness_and_excludes_wait_time();

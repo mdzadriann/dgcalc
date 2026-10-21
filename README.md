@@ -62,8 +62,8 @@ Version 1 loads with the default viewport and all slots visible. Version 2 retai
 Open `TRACE` → Diagnostics. It reports Free RAM (bytes) when opened, last completed Coarse (ticks), last completed Fine (ticks), Longest row (ticks), Render restarts, User cancels, last completed Drawable equations count, and Freshness. The CE clock runs at **32,768 ticks/second**. Stage times include intervening input/UI time; fine timing excludes the coarse-preview release wait. Longest row times one scheduler batch. Interrupted stages retain prior completed samples. Restart/cancel counters saturate at 65,535 and reset on app startup. The page allocates no history and does not change the project or save. `ENTER`, `CLEAR`, or `TRACE` closes it; the quit chord remains available.
 
 - CEdev v15.0, eZ80 Clang 19.1.0; target arTIfiCE Shell 2.1. Calculator OS version is pending.
-- Final clean host suite: **65,890 checks, zero failures, zero compiler warnings**.
-- Two independent clean CE builds with fixed comment: **52,044 bytes each**, identical SHA-256 `B636D2E289079569AE38D96B597D2A5A0EFA7D71C5F65C0A4B795FA74E2E7712`.
+- Final host suite: **65,915 checks, zero failures, zero compiler warnings**.
+- Two independent clean CE builds with fixed comment: **52,052 bytes each**, identical SHA-256 `B0D530E9DEFE746D6181AA8E2274E0AEE8CBE0AE662A5F8B0DCB578813F63387`.
 - CE compilation has zero C warnings; linking emits the two known missing `.note.GNU-stack` metadata warnings for `atomic_load_increasing_32.o` and `obj/crt0.o`.
 - Map: pending keys 8 bytes; visibility mask 2 bytes inside the 898-byte Project; render controller 866 bytes including the 848-byte scheduler; diagnostics 22 bytes; total BSS **13,442 bytes**; linked ordinary C heap region **47,248 bytes** before runtime allocations. GraphX uses its existing 153,600-byte LCD VRAM region for two 76,800-byte frames outside application BSS/heap.
 - The user's approximately 117,000 bytes of free calculator RAM is external context, not a measurement of this build's available C heap. Static bounds and host tests do not establish physical speed, RAM safety, or final approval.
