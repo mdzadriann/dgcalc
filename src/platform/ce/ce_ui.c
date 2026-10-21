@@ -4,6 +4,8 @@
 
 #include <graphx.h>
 #include <keypadc.h>
+#include <ti/vars.h>
+#include <time.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,6 +29,12 @@ static enum { RENDER_IDLE, RENDER_COARSE, RENDER_WAIT, RENDER_FINE } render_phas
 static bool render_editing;
 static CeRenderStatus render_status;
 static uint32_t render_generation, job_generation;
+static struct {
+    uint32_t coarse_ticks, fine_ticks, longest_row_ticks;
+    uint16_t restarts, cancels;
+    uint8_t drawable_count;
+    clock_t stage_started;
+} diagnostics;
 static const uint8_t slot_colors[] = {COLOR_BLUE, COLOR_RED, COLOR_GREEN};
 
 static void configure_palette(void) {
@@ -330,6 +338,7 @@ static void draw_graph_panel(GraphRect rect, const Viewport2D *viewport) {
 }
 
 void ce_ui_begin(void) {
+    memset(&diagnostics, 0, sizeof(diagnostics));
     render_generation++;
     project_plot2d_cancel(&render_job);
     render_phase = RENDER_IDLE;
@@ -363,6 +372,11 @@ static void draw_static_frame(const AppState *state, const Project *project,
 
 void ce_ui_draw(const AppState *state, const Project *project, bool editing,
                 bool load_graph) {
+    bool replacing = render_status.state == CE_RENDER_COARSE ||
+                     render_status.state == CE_RENDER_RELEASE_KEYS ||
+                     render_status.state == CE_RENDER_FINE ||
+                     (render_status.state == CE_RENDER_PREVIEW &&
+                      !render_status.manual_reload_required);
     render_generation++;
     project_plot2d_cancel(&render_job);
     render_phase = RENDER_IDLE;
@@ -372,12 +386,16 @@ void ce_ui_draw(const AppState *state, const Project *project, bool editing,
     if (load_graph && state->mode == GRAPH_MODE_2D && state->view != APP_VIEW_EXPRESSIONS) {
         GraphRect rect = {state->view == APP_VIEW_SPLIT ? 132 : 0, 24,
                           state->view == APP_VIEW_SPLIT ? 188 : 320, 196};
+        diagnostics.stage_started = clock();
         project_plot2d_begin(&render_job, project, state->viewport, rect, PLOT2D_COARSE_STEP);
         job_generation = render_generation;
         render_status.total = project_plot2d_total(&render_job);
         render_status.state = render_job.state == PROJECT_PLOT2D_ERROR
                                   ? CE_RENDER_ERROR : CE_RENDER_COARSE;
-        if (render_status.state != CE_RENDER_ERROR) render_phase = RENDER_COARSE;
+        if (render_status.state != CE_RENDER_ERROR) {
+            render_phase = RENDER_COARSE;
+            if (replacing && diagnostics.restarts < UINT16_MAX) diagnostics.restarts++;
+        }
     }
     draw_static_frame(state, project, editing);
     gfx_SwapDraw();
@@ -401,6 +419,7 @@ void ce_ui_refresh(const AppState *state, const Project *project, bool editing) 
 
 bool ce_ui_cancel_render(void) {
     if (render_phase == RENDER_IDLE) return false;
+    if (diagnostics.cancels < UINT16_MAX) diagnostics.cancels++;
     render_status.state = render_phase == RENDER_COARSE ? CE_RENDER_CANCELED : CE_RENDER_PREVIEW;
     render_status.manual_reload_required = true;
     render_generation++;
@@ -434,6 +453,8 @@ static void draw_segment(void *user, uint8_t index, int16_t x0, int16_t y0,
 bool ce_ui_render_step(const AppState *state, const Project *project,
                        bool navigation_active) {
     ProjectPlot2DStep result;
+    clock_t row_started, row_finished;
+    uint32_t row_ticks;
     uint32_t generation = job_generation;
     uint8_t completed = render_status.completed;
     if (render_phase == RENDER_IDLE) return false;
@@ -446,6 +467,7 @@ bool ce_ui_render_step(const AppState *state, const Project *project,
             }
             return true;
         }
+        diagnostics.stage_started = clock();
         project_plot2d_begin(&render_job, project, state->viewport, render_job.job.rect,
                              PLOT2D_FINE_STEP);
         render_phase = RENDER_FINE;
@@ -463,12 +485,23 @@ bool ce_ui_render_step(const AppState *state, const Project *project,
         /* Starting refinement is bounded separately; its first row waits for input. */
         return true;
     }
+    row_started = clock();
     result = project_plot2d_step(&render_job, project, draw_segment, &generation);
+    row_finished = clock();
     if (generation != render_generation) return false;
+    row_ticks = row_finished - row_started;
+    if (row_ticks > diagnostics.longest_row_ticks)
+        diagnostics.longest_row_ticks = row_ticks;
     render_status.completed = project_plot2d_completed(&render_job);
     if (result == PROJECT_PLOT2D_PROGRESS) {
         if (completed != render_status.completed) refresh_render_header();
         return true;
+    }
+    if (result == PROJECT_PLOT2D_DONE) {
+        uint32_t ticks = row_finished - diagnostics.stage_started;
+        if (render_phase == RENDER_COARSE) diagnostics.coarse_ticks = ticks;
+        else diagnostics.fine_ticks = ticks;
+        diagnostics.drawable_count = render_status.total;
     }
     render_phase = result == PROJECT_PLOT2D_DONE && render_phase == RENDER_COARSE
                        ? RENDER_WAIT : RENDER_IDLE;
@@ -561,9 +594,59 @@ static void draw_dialog(const char *title,
     gfx_BlitBuffer();
 }
 
+static void print_diagnostic_number(uint32_t value, int y) {
+    gfx_SetTextXY(220, y);
+    /* GraphX accepts a 24-bit unsigned int; split full clock values losslessly. */
+    if (value >= 1000000) {
+        gfx_PrintUInt((unsigned int)(value / 1000000), 1);
+        gfx_PrintUInt((unsigned int)(value % 1000000), 6);
+    } else gfx_PrintUInt((unsigned int)value, 1);
+}
+
+static void ce_ui_show_diagnostics(void) {
+    static const char *const labels[] = {
+        "Free RAM (bytes)", "Coarse (ticks)", "Fine (ticks)",
+        "Longest row (ticks)", "Render restarts", "User cancels",
+        "Drawable equations", "Freshness"
+    };
+    static const char *const freshness[] = {
+        "Current", "Coarse", "Release keys", "Refining", "Preview",
+        "Canceled", "Out of date", "Error"
+    };
+    void *free_ram;
+    size_t ram = os_MemChk(&free_ram);
+    uint8_t row;
+    kb_lkey_t key;
+    gfx_SetColor(COLOR_PANEL);
+    gfx_FillRectangle_NoClip(4, 10, 312, 202);
+    gfx_SetColor(COLOR_BLUE);
+    gfx_Rectangle_NoClip(4, 10, 312, 202);
+    gfx_SetTextFGColor(COLOR_TEXT);
+    gfx_PrintStringXY("Diagnostics (32768 ticks/s)", 12, 24);
+    for (row = 0; row < 8; row++)
+        gfx_PrintStringXY(labels[row], 12, 46 + row * 18);
+    print_diagnostic_number(ram, 46);
+    print_diagnostic_number(diagnostics.coarse_ticks, 64);
+    print_diagnostic_number(diagnostics.fine_ticks, 82);
+    print_diagnostic_number(diagnostics.longest_row_ticks, 100);
+    print_diagnostic_number(diagnostics.restarts, 118);
+    print_diagnostic_number(diagnostics.cancels, 136);
+    print_diagnostic_number(diagnostics.drawable_count, 154);
+    gfx_PrintStringXY(render_status.state == CE_RENDER_PREVIEW &&
+                      render_status.manual_reload_required ? "Canceled preview"
+                      : freshness[render_status.state], 172, 172);
+    gfx_PrintStringXY("ENTER/CLEAR: Close", 12, 198);
+    gfx_BlitBuffer();
+    do {
+        key = wait_for_key(true);
+    } while (key != kb_KeyEnter && key != kb_KeyClear &&
+             key != kb_KeyTrace && key != kb_KeyMode);
+}
+
 AppAction ce_ui_show_menu(void) {
     static const char *const options[] = {
-        "New project", "Save project", "Load project", "Toggle 2D / 3D", "Quit"
+        "New project", "Save project", "Load project", "Toggle 2D / 3D", "Quit",
+        "Diagnostics"
     };
     static const AppAction actions[] = {
         APP_ACTION_NEW_PROJECT,
@@ -576,13 +659,17 @@ AppAction ce_ui_show_menu(void) {
 
     for (;;) {
         kb_lkey_t key;
-        draw_dialog("Project menu", options, 5, selected);
+        draw_dialog("Project menu", options, 6, selected);
         key = wait_for_key(true);
         if (key == kb_KeyUp && selected > 0) {
             selected--;
-        } else if (key == kb_KeyDown && selected < 4) {
+        } else if (key == kb_KeyDown && selected < 5) {
             selected++;
         } else if (key == kb_KeyEnter) {
+            if (selected == 5) {
+                ce_ui_show_diagnostics();
+                return APP_ACTION_NONE;
+            }
             return actions[selected];
         } else if (key == kb_KeyMode) {
             return APP_ACTION_QUIT;

@@ -3,6 +3,24 @@
 #include <graphx.h>
 #include <stdio.h>
 #include <string.h>
+#include <ti/vars.h>
+
+clock_t fake_clock_ticks, fake_clock_increment;
+size_t fake_free_ram;
+unsigned ram_queries, clock_queries;
+
+clock_t fake_clock(void) {
+    clock_t result = fake_clock_ticks;
+    fake_clock_ticks += fake_clock_increment;
+    clock_queries++;
+    return result;
+}
+
+size_t os_MemChk(void **free) {
+    *free = NULL;
+    ram_queries++;
+    return fake_free_ram;
+}
 
 uint16_t fake_gfx_palette[256];
 uint8_t kb_Data[8];
@@ -46,6 +64,9 @@ static void record_operation(TestDrawOperation operation) {
 }
 
 void reset_fake_hardware(void) {
+    fake_clock_ticks = fake_clock_increment = 0;
+    fake_free_ram = 0;
+    ram_queries = clock_queries = 0;
     memset(kb_Data, 0, sizeof(kb_Data));
     scan_keys = NULL;
     scan_key_count = 0;
@@ -178,8 +199,7 @@ void gfx_SetTextXY(int x, int y) {
 }
 void gfx_PrintUInt(unsigned int value, int digits) {
     char text[16];
-    (void)digits;
-    snprintf(text, sizeof(text), "%u", value);
+    snprintf(text, sizeof(text), "%0*u", digits, value);
     gfx_PrintStringXY(text, text_x, text_y);
     text_x += gfx_GetStringWidth(text);
 }

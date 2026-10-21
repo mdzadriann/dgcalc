@@ -638,7 +638,189 @@ static void test_obsolete_generation_cannot_draw_or_swap(void) {
     project_dispose(&project);
 }
 
+static void open_diagnostics(void) {
+    static const kb_lkey_t keys[] = {
+        0, kb_KeyDown, 0, 0, kb_KeyDown, 0, 0, kb_KeyDown, 0,
+        0, kb_KeyDown, 0, 0, kb_KeyDown, 0, 0, kb_KeyEnter, 0,
+        0, kb_KeyLeft, 0, 0, kb_KeyRight, 0, 0, kb_KeyUp, 0,
+        0, kb_KeyClear, 0
+    };
+    script_keys(keys, sizeof(keys) / sizeof(keys[0]));
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_ui_show_menu());
+    ASSERT_EQ_INT(sizeof(keys) / sizeof(keys[0]), scan_key_index);
+}
+
+static void assert_diagnostic_row(int y, const char *label, const char *value) {
+    size_t i;
+    bool label_seen = false, value_seen = false;
+    char number[41] = "";
+    for (i = 0; i < graph_print_count; i++) {
+        TestPrint *p = &graph_prints[i];
+        if (p->y != y) continue;
+        if (p->x == 12 && strcmp(p->text, label) == 0) label_seen = true;
+        if (p->x == (y == 172 ? 172 : 220) && strcmp(p->text, value) == 0) value_seen = true;
+        if (y != 172 && p->x >= 220 && strlen(number) + strlen(p->text) < sizeof(number))
+            strcat(number, p->text);
+    }
+    ASSERT_TRUE(label_seen);
+    ASSERT_TRUE(value_seen || strcmp(number, value) == 0);
+}
+
+/* Catches estimates instead of measured ticks, counting promotions as restarts,
+   canceled samples replacing completed times, and modal keys leaking to work. */
+static void test_diagnostics_reports_measured_completed_work_without_mutation(void) {
+    AppState state, original_state;
+    Project project, original_project;
+    size_t before;
+    unsigned ticks_before;
+    int row;
+    reset_fake_hardware();
+    ce_ui_begin();
+    app_state_init(&state);
+    state.view = APP_VIEW_GRAPH;
+    project_init(&project);
+    commit_graph_line(&project, 0, "x=2");
+    commit_graph_line(&project, 1, "a=4");
+    fake_clock_increment = 10;
+    ce_ui_draw(&state, &project, false, true);
+    for (row = 0; row < 26; row++) ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+    ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+    for (row = 0; row < 49; row++) ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+    ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+    ce_ui_draw(&state, &project, false, true); /* Completed load is not a restart. */
+    ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+    state.viewport.center_x = 2;
+    ce_ui_draw(&state, &project, false, true); /* Replaces unfinished work once. */
+    ASSERT_TRUE(ce_ui_cancel_render());
+    ASSERT_FALSE(ce_ui_cancel_render());
+    fake_free_ram = 12345;
+    ASSERT_EQ_INT(0, ram_queries);
+    original_state = state;
+    original_project = project;
+    before = segment_count();
+    ticks_before = clock_queries;
+    graph_print_count = 0;
+    open_diagnostics();
+    assert_diagnostic_row(46, "Free RAM (bytes)", "12345");
+    assert_diagnostic_row(64, "Coarse (ticks)", "520");
+    assert_diagnostic_row(82, "Fine (ticks)", "1000");
+    assert_diagnostic_row(100, "Longest row (ticks)", "10");
+    assert_diagnostic_row(118, "Render restarts", "1");
+    assert_diagnostic_row(136, "User cancels", "1");
+    assert_diagnostic_row(154, "Drawable equations", "1");
+    assert_diagnostic_row(172, "Freshness", "Canceled");
+    ASSERT_EQ_INT(1, ram_queries);
+    ASSERT_EQ_INT(ticks_before, clock_queries);
+    ASSERT_EQ_INT(before, segment_count());
+    ASSERT_EQ_INT(0, memcmp(&state, &original_state, sizeof(state)));
+    ASSERT_EQ_INT(0, memcmp(&project, &original_project, sizeof(project)));
+    ASSERT_TRUE(ce_ui_render_status().manual_reload_required);
+    ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+    ce_ui_draw(&state, &project, false, false); /* Main's latched return path. */
+    ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+    fake_free_ram = 23456;
+    graph_print_count = 0;
+    open_diagnostics();
+    assert_diagnostic_row(46, "Free RAM (bytes)", "23456");
+    assert_diagnostic_row(172, "Freshness", "Out of date");
+    ASSERT_EQ_INT(2, ram_queries);
+    project_dispose(&project);
+}
+
+/* Catches wrapping counters and truncating the CE's 32-bit clock to GraphX's
+   24-bit integer, using existing source observation rather than a public hook. */
+static void test_diagnostics_saturates_counts_and_prints_full_clock_values(void) {
+    AppState state;
+    Project project;
+    reset_fake_hardware();
+    ce_ui_begin();
+    app_state_init(&state);
+    state.view = APP_VIEW_GRAPH;
+    project_init(&project);
+    commit_graph_line(&project, 0, "x=2");
+    ce_ui_draw(&state, &project, false, true);
+    diagnostics.restarts = UINT16_MAX;
+    diagnostics.cancels = UINT16_MAX;
+    ce_ui_draw(&state, &project, false, true);
+    ASSERT_TRUE(ce_ui_cancel_render());
+    diagnostics.coarse_ticks = UINT32_MAX;
+    diagnostics.fine_ticks = 1000001;
+    graph_print_count = 0;
+    open_diagnostics();
+    assert_diagnostic_row(64, "Coarse (ticks)", "4294967295");
+    assert_diagnostic_row(82, "Fine (ticks)", "1000001");
+    assert_diagnostic_row(118, "Render restarts", "65535");
+    assert_diagnostic_row(136, "User cancels", "65535");
+    project_dispose(&project);
+}
+
+/* Catches rollover subtraction, counting modal redraws as user cancels, and
+   losing the page's current state while invalidating unfinished work. */
+static void test_diagnostics_preserves_freshness_and_excludes_wait_time(void) {
+    static const char *const expected[] = {
+        "Coarse", "Release keys", "Preview", "Refining", "Canceled preview",
+        "Current", "Out of date", "Error"
+    };
+    AppState state;
+    Project project;
+    int phase, row;
+    project_init(&project);
+    commit_graph_line(&project, 0, "x=2");
+    for (phase = 0; phase < 8; phase++) {
+        CeRenderStatus before;
+        unsigned clocks_before;
+        size_t lines_before;
+        reset_fake_hardware();
+        ce_ui_begin();
+        app_state_init(&state);
+        state.view = APP_VIEW_GRAPH;
+        fake_clock_ticks = UINT32_MAX - 200;
+        fake_clock_increment = 10;
+        if (phase == 7) state.viewport.units_per_pixel = NAN;
+        ce_ui_draw(&state, &project, false, phase != 6);
+        if (phase >= 1 && phase <= 5) {
+            for (row = 0; row < 26; row++)
+                ASSERT_TRUE(ce_ui_render_step(&state, &project, phase == 1));
+            ASSERT_EQ_INT(520, diagnostics.coarse_ticks);
+            ASSERT_EQ_INT(10, diagnostics.longest_row_ticks);
+            /* Waiting on held keys must not enter the completed fine time. */
+            fake_clock_ticks += 20000;
+            if (phase >= 3) ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+            if (phase == 4) ASSERT_TRUE(ce_ui_cancel_render());
+            if (phase == 5) {
+                for (row = 0; row < 49; row++) ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+                ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+                ASSERT_EQ_INT(1000, diagnostics.fine_ticks);
+            }
+        }
+        before = ce_ui_render_status();
+        clocks_before = clock_queries;
+        lines_before = segment_count();
+        graph_print_count = 0;
+        open_diagnostics();
+        assert_diagnostic_row(172, "Freshness", expected[phase]);
+        ASSERT_EQ_INT(before.state, ce_ui_render_status().state);
+        ASSERT_EQ_INT(before.completed, ce_ui_render_status().completed);
+        ASSERT_EQ_INT(before.total, ce_ui_render_status().total);
+        ASSERT_EQ_INT(before.manual_reload_required, ce_ui_render_status().manual_reload_required);
+        ASSERT_EQ_INT(phase == 4 ? 1 : 0, diagnostics.cancels);
+        ASSERT_EQ_INT(0, diagnostics.restarts);
+        ASSERT_EQ_INT(clocks_before, clock_queries);
+        ASSERT_EQ_INT(lines_before, segment_count());
+        ASSERT_FALSE(ce_ui_render_step(&state, &project, false));
+        if (phase == 0) {
+            ce_ui_draw(&state, &project, false, true); /* Main restores interrupted work. */
+            ASSERT_EQ_INT(1, diagnostics.restarts);
+            ASSERT_TRUE(ce_ui_render_step(&state, &project, false));
+        }
+    }
+    project_dispose(&project);
+}
+
 void run_ce_ui_tests(void) {
+    test_diagnostics_saturates_counts_and_prints_full_clock_values();
+    test_diagnostics_preserves_freshness_and_excludes_wait_time();
+    test_diagnostics_reports_measured_completed_work_without_mutation();
     {
         static const kb_lkey_t close_keys[] = {0, kb_KeyClear, 0};
         AppState state;

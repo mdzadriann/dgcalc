@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <keypadc.h>
+#include <time.h>
+
+extern clock_t fake_clock_ticks, fake_clock_increment;
+extern size_t fake_free_ram;
+extern unsigned ram_queries, clock_queries;
 
 typedef struct {
     char text[16];
