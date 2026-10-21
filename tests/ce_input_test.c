@@ -14,6 +14,127 @@ static AppAction press(kb_lkey_t key, EditorBuffer *editor, bool editing,
     return ce_input_poll(editor, editing, view);
 }
 
+static void test_math_cycles_complete_relations_at_each_caret_position(void) {
+    static const struct { const char *source, *want; int end; } cases[] = {
+        {"x=y", "x<y", 2}, {"x<y", "x>y", 2},
+        {"x>y", "x<=y", 3}, {"x<=y", "x>=y", 3},
+        {"x>=y", "x=y", 2}, {"=", "<", 1}, {">=", "=", 1}
+    };
+    EditorBuffer editor;
+    size_t i, cursor;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        size_t start = cases[i].source[0] == 'x' ? 1 : 0;
+        size_t end = strlen(cases[i].source) - start;
+        for (cursor = start; cursor <= end; cursor++) {
+            reset_fake_hardware();
+            ce_input_begin();
+            editor_init(&editor);
+            ASSERT_TRUE(editor_set_text(&editor, cases[i].source));
+            ASSERT_TRUE(editor_move(&editor, (int16_t)cursor - editor.cursor));
+            ASSERT_EQ_INT(APP_ACTION_NONE,
+                          press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS));
+            ASSERT_STR_EQ(cases[i].want, editor.text);
+            ASSERT_EQ_INT(strlen(cases[i].want), editor.length);
+            ASSERT_EQ_INT(cases[i].end, editor.cursor);
+            ce_input_end();
+        }
+    }
+}
+
+static void test_math_inserts_locally_and_rejects_invalid_clusters(void) {
+    static const struct { const char *source; int cursor; const char *want; int end; } cases[] = {
+        {"", 0, "=", 1}, {"xy", 1, "x=y", 2},
+        {"x=y+z", 5, "x=y+z=", 6}, {"x=y+z", 0, "=x=y+z", 1},
+        {"x=y<z", 2, "x<y<z", 2}, {"x=y<z", 3, "x=y>z", 4}
+    };
+    static const char *invalid[] = {"==", "<<", "<==", ">>", "=>", "><", ">=<", "===="};
+    EditorBuffer editor;
+    size_t i, cursor;
+
+    reset_fake_hardware();
+    ce_input_begin();
+    editor_init(&editor);
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT_TRUE(editor_set_text(&editor, cases[i].source));
+        ASSERT_TRUE(editor_move(&editor, cases[i].cursor - editor.cursor));
+        (void)press(kb_KeyMath, &editor, true, APP_VIEW_SPLIT);
+        ASSERT_STR_EQ(cases[i].want, editor.text);
+        ASSERT_EQ_INT(strlen(cases[i].want), editor.length);
+        ASSERT_EQ_INT(cases[i].end, editor.cursor);
+    }
+    for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        for (cursor = 0; cursor <= strlen(invalid[i]); cursor++) {
+            ASSERT_TRUE(editor_set_text(&editor, invalid[i]));
+            ASSERT_TRUE(editor_move(&editor, (int16_t)cursor - editor.cursor));
+            (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+            ASSERT_STR_EQ(invalid[i], editor.text);
+            ASSERT_EQ_INT(strlen(invalid[i]), editor.length);
+            ASSERT_EQ_INT(cursor, editor.cursor);
+        }
+    }
+    ce_input_end();
+}
+
+static void test_math_growth_is_transactional_at_capacity(void) {
+    EditorBuffer editor;
+    char full[EDITOR_CAPACITY];
+    size_t cursor;
+
+    memset(full, 'x', sizeof(full) - 1);
+    full[sizeof(full) - 1] = '\0';
+    full[1] = '>';
+    reset_fake_hardware();
+    ce_input_begin();
+    editor_init(&editor);
+    for (cursor = 1; cursor <= 2; cursor++) {
+        ASSERT_TRUE(editor_set_text(&editor, full));
+        ASSERT_TRUE(editor_move(&editor, (int16_t)cursor - editor.cursor));
+        (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ(full, editor.text);
+        ASSERT_EQ_INT(EDITOR_CAPACITY - 1, editor.length);
+        ASSERT_EQ_INT(cursor, editor.cursor);
+    }
+    ASSERT_TRUE(editor_move(&editor, 1));
+    (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ(full, editor.text);
+    ASSERT_EQ_INT(3, editor.cursor);
+    full[1] = '=';
+    ASSERT_TRUE(editor_set_text(&editor, full));
+    ASSERT_TRUE(editor_move(&editor, 2 - editor.cursor));
+    (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+    full[1] = '<';
+    ASSERT_STR_EQ(full, editor.text);
+    ASSERT_EQ_INT(EDITOR_CAPACITY - 1, editor.length);
+    ASSERT_EQ_INT(2, editor.cursor);
+    ce_input_end();
+}
+
+static void test_former_second_relation_shortcuts_are_consumed_without_mutation(void) {
+    static const kb_lkey_t keys[] = {kb_KeyMath, kb_KeyApps, kb_KeyPrgm, kb_KeyVars};
+    EditorBuffer editor;
+    size_t i;
+
+    reset_fake_hardware();
+    ce_input_begin();
+    editor_init(&editor);
+    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        ASSERT_TRUE(editor_set_text(&editor, "x=y"));
+        ASSERT_TRUE(editor_move(&editor, -1));
+        (void)press(kb_Key2nd, &editor, true, APP_VIEW_EXPRESSIONS);
+        (void)press(keys[i], &editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ("x=y", editor.text);
+        ASSERT_EQ_INT(3, editor.length);
+        ASSERT_EQ_INT(2, editor.cursor);
+        (void)press(kb_Key1, &editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ("x=1y", editor.text);
+    }
+    (void)press(kb_KeyAlpha, &editor, true, APP_VIEW_EXPRESSIONS);
+    (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x=1ay", editor.text);
+    ce_input_end();
+}
+
 static void hold_keys(kb_lkey_t first, kb_lkey_t second) {
     memset(kb_Data, 0, sizeof(kb_Data));
     kb_Data[first >> 8] |= (uint8_t)first;
@@ -334,6 +455,10 @@ static void test_modal_menu_consumes_navigation_without_moving_background(void) 
 }
 
 void run_ce_input_tests(void) {
+    test_math_cycles_complete_relations_at_each_caret_position();
+    test_math_inserts_locally_and_rejects_invalid_clusters();
+    test_math_growth_is_transactional_at_capacity();
+    test_former_second_relation_shortcuts_are_consumed_without_mutation();
     test_overlapping_edges_are_delivered_once_and_can_be_repressed();
     test_same_scan_modifiers_precede_ordinary_keys();
     test_context_actions_discard_queued_ordinary_edges();

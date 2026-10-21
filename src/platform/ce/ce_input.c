@@ -58,6 +58,58 @@ static bool insert_text(EditorBuffer *editor, const char *text) {
     return true;
 }
 
+static bool relation_character(char value) {
+    return value == '=' || value == '<' || value == '>';
+}
+
+static void cycle_relation(EditorBuffer *editor) {
+    size_t start = editor->cursor;
+    size_t end;
+    size_t length;
+    size_t replacement_length;
+    const char *replacement;
+    char first;
+
+    if (start > 0 && relation_character(editor->text[start - 1])) {
+        start--;
+        if (start > 0 && editor->text[start] == '=' &&
+            (editor->text[start - 1] == '<' || editor->text[start - 1] == '>')) {
+            start--;
+        }
+    }
+    first = editor->text[start];
+    if (!relation_character(first)) {
+        (void)editor_insert(editor, '=');
+        return;
+    }
+    end = start + 1;
+    if ((first == '<' || first == '>') && editor->text[end] == '=') {
+        end++;
+    }
+    /* Reject the entire invalid cluster rather than cycling a valid prefix. */
+    if ((start > 0 && relation_character(editor->text[start - 1])) ||
+        relation_character(editor->text[end])) {
+        return;
+    }
+    if (first == '=') {
+        replacement = "<";
+    } else if (first == '<') {
+        replacement = end - start == 2 ? ">=" : ">";
+    } else {
+        replacement = end - start == 2 ? "=" : "<=";
+    }
+    replacement_length = strlen(replacement);
+    length = editor->length - (end - start) + replacement_length;
+    if (length >= EDITOR_CAPACITY) {
+        return;
+    }
+    memmove(&editor->text[start + replacement_length], &editor->text[end],
+            editor->length - end + 1);
+    memcpy(&editor->text[start], replacement, replacement_length);
+    editor->length = (uint16_t)length;
+    editor->cursor = (uint16_t)(start + replacement_length);
+}
+
 static char alpha_character(kb_lkey_t key) {
     switch (key) {
         case kb_KeyMath: return 'a';
@@ -96,10 +148,6 @@ static const char *second_text(kb_lkey_t key) {
         case kb_KeySin: return "abs(";
         case kb_KeyCos: return "exp(";
         case kb_KeyTan: return "floor(";
-        case kb_KeyMath: return "<";
-        case kb_KeyApps: return ">";
-        case kb_KeyPrgm: return "<=";
-        case kb_KeyVars: return ">=";
         default: return NULL;
     }
 }
@@ -127,7 +175,6 @@ static const char *normal_text(kb_lkey_t key) {
         case kb_KeyRParen: return ")";
         case kb_KeyChs: return "-";
         case kb_KeySquare: return "^2";
-        case kb_KeyMath: return "=";
         case kb_KeyGraphVar: return "x";
         case kb_KeySin: return "sin(";
         case kb_KeyCos: return "cos(";
@@ -272,6 +319,10 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing, AppView view)
     }
     if (key == kb_KeyRight) {
         (void)editor_move(active_editor, 1);
+        return APP_ACTION_NONE;
+    }
+    if (key == kb_KeyMath) {
+        cycle_relation(active_editor);
         return APP_ACTION_NONE;
     }
     text = normal_text(key);
