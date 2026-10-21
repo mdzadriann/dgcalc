@@ -603,7 +603,7 @@ static void print_diagnostic_number(uint32_t value, int y) {
     } else gfx_PrintUInt((unsigned int)value, 1);
 }
 
-static void ce_ui_show_diagnostics(void) {
+static AppAction ce_ui_show_diagnostics(void) {
     static const char *const labels[] = {
         "Free RAM (bytes)", "Coarse (ticks)", "Fine (ticks)",
         "Longest row (ticks)", "Render restarts", "User cancels",
@@ -641,6 +641,7 @@ static void ce_ui_show_diagnostics(void) {
         key = wait_for_key(true);
     } while (key != kb_KeyEnter && key != kb_KeyClear &&
              key != kb_KeyTrace && key != kb_KeyMode);
+    return key == kb_KeyMode ? APP_ACTION_QUIT : APP_ACTION_NONE;
 }
 
 AppAction ce_ui_show_menu(void) {
@@ -667,8 +668,7 @@ AppAction ce_ui_show_menu(void) {
             selected++;
         } else if (key == kb_KeyEnter) {
             if (selected == 5) {
-                ce_ui_show_diagnostics();
-                return APP_ACTION_NONE;
+                return ce_ui_show_diagnostics();
             }
             return actions[selected];
         } else if (key == kb_KeyMode) {

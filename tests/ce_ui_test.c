@@ -638,6 +638,41 @@ static void test_obsolete_generation_cannot_draw_or_swap(void) {
     project_dispose(&project);
 }
 
+/* Catches Diagnostics swallowing the quit chord while keeping ordinary closes. */
+static void test_diagnostics_forwards_quit_and_preserves_dismissals(void) {
+    static const kb_lkey_t dismissals[] = {
+        kb_KeyEnter, kb_KeyClear, kb_KeyTrace, kb_KeyMode
+    };
+    size_t dismissal;
+    for (dismissal = 0; dismissal < 4; dismissal++) {
+        kb_lkey_t keys[23];
+        size_t count = 0, down;
+        for (down = 0; down < 5; down++) {
+            keys[count++] = 0;
+            keys[count++] = kb_KeyDown;
+            keys[count++] = 0;
+        }
+        keys[count++] = 0;
+        keys[count++] = kb_KeyEnter;
+        keys[count++] = 0;
+        keys[count++] = 0;
+        if (dismissals[dismissal] == kb_KeyMode) {
+            keys[count++] = kb_Key2nd;
+            keys[count++] = 0;
+        }
+        keys[count++] = dismissals[dismissal];
+        keys[count++] = 0;
+        reset_fake_hardware();
+        ce_ui_begin();
+        script_keys(keys, count);
+        ASSERT_EQ_INT(dismissal == 3 ? APP_ACTION_QUIT : APP_ACTION_NONE,
+                      ce_ui_show_menu());
+        ASSERT_EQ_INT(count, scan_key_index);
+        ASSERT_EQ_INT(1, ram_queries);
+        ASSERT_EQ_INT(MODE_3_CONTINUOUS, kb_GetMode());
+    }
+}
+
 static void open_diagnostics(void) {
     static const kb_lkey_t keys[] = {
         0, kb_KeyDown, 0, 0, kb_KeyDown, 0, 0, kb_KeyDown, 0,
@@ -818,6 +853,7 @@ static void test_diagnostics_preserves_freshness_and_excludes_wait_time(void) {
 }
 
 void run_ce_ui_tests(void) {
+    test_diagnostics_forwards_quit_and_preserves_dismissals();
     test_diagnostics_saturates_counts_and_prints_full_clock_values();
     test_diagnostics_preserves_freshness_and_excludes_wait_time();
     test_diagnostics_reports_measured_completed_work_without_mutation();
