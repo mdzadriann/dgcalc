@@ -30,12 +30,16 @@ static EvalResult observed_evaluate(const Project *project, uint8_t index,
 #define project_plot2d_begin observed_begin
 #define project_plot2d_step observed_step
 #define project_plot2d_cancel observed_cancel
+#define project_plot2d_completed observed_completed
+#define project_plot2d_total observed_total
 #include "../src/graph/project_plot2d.c"
 #undef plot2d_step
 #undef project_evaluate_2d
 #undef project_plot2d_begin
 #undef project_plot2d_step
 #undef project_plot2d_cancel
+#undef project_plot2d_completed
+#undef project_plot2d_total
 
 typedef struct {
     GraphRect rect;
@@ -104,7 +108,7 @@ static void observe_render(ProjectPlot2D *job, const Project *project, Capture *
     row_calls = sample_calls = 0;
     memset(sampled, 0, sizeof(sampled));
     memset(sample_errors, 0, sizeof(sample_errors));
-    observed_begin(job, viewport, c->rect, 4);
+    observed_begin(job, project, viewport, c->rect, 4);
     do {
         unsigned before = row_calls;
         result = observed_step(job, project, capture, c);
@@ -138,7 +142,7 @@ static void test_mixed_slots_render_retained_equation_with_invalid_draft_visible
     ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&project, 14));
     ASSERT_STR_EQ("y=", project_line_display_text(&project, 14));
     ASSERT_TRUE(project_line_is_drawable_2d(&project, 14));
-    project_plot2d_begin(&job, viewport, rectangle, 4);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 4);
     ASSERT_EQ_INT(19, render(&job, &project, &c));
     for (i = 0; i < PROJECT_MAX_EXPRESSIONS; i++) {
         if (i == 2 || i == 11 || i == 14) ASSERT_TRUE(c.counts[i] > 0);
@@ -177,7 +181,7 @@ static void test_zero_five_and_sixteen_lines_reuse_fixed_memory(void) {
         for (step = 8; step >= 4; step -= 4) {
             Capture c = {.rect = rectangle};
             unsigned steps;
-            project_plot2d_begin(&job, viewport, rectangle, (uint8_t)step);
+            project_plot2d_begin(&job, &project, viewport, rectangle, (uint8_t)step);
             steps = render(&job, &project, &c);
             ASSERT_EQ_INT(counts[fixture] * (24 / step) + (counts[fixture] < 16), steps);
             for (i = 0; i < counts[fixture]; i++) ASSERT_TRUE(c.counts[i] > 0);
@@ -205,7 +209,7 @@ static void test_one_underlying_row_per_call_and_no_sampling_skipped_slots(void)
     commit(&project, 6, "y=x+100");
     row_calls = sample_calls = 0;
     memset(sampled, 0, sizeof(sampled));
-    observed_begin(&job, viewport, c.rect, 4);
+    observed_begin(&job, &project, viewport, c.rect, 4);
     for (call = 0; call < 4; call++) {
         ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, observed_step(&job, &project, capture, &c));
         ASSERT_EQ_INT(call + 1, row_calls);
@@ -222,23 +226,23 @@ static void test_one_underlying_row_per_call_and_no_sampling_skipped_slots(void)
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, NULL, NULL, NULL));
     observed_cancel(&job);
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, &project, capture, &c));
-    observed_begin(&job, viewport, c.rect, 4);
+    observed_begin(&job, &project, viewport, c.rect, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, observed_step(&job, &project, capture, &c));
     observed_cancel(&job);
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, &project, capture, &c));
     ASSERT_EQ_INT(5, row_calls);
     ASSERT_EQ_INT(24, sample_calls);
-    observed_begin(&job, viewport, c.rect, 8);
+    observed_begin(&job, &project, viewport, c.rect, 8);
     ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, observed_step(&job, &project, capture, &c));
     ASSERT_EQ_INT(6, row_calls);
     ASSERT_EQ_INT(28, sample_calls);
-    observed_begin(&job, viewport, c.rect, 4);
+    observed_begin(&job, &project, viewport, c.rect, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, observed_step(&job, &project, capture, &c));
     ASSERT_EQ_INT(7, row_calls);
     ASSERT_EQ_INT(34, sample_calls);
     project_dispose(&project);
     project_init_with_memory(&project, counting_memory());
-    observed_begin(&job, viewport, c.rect, 4);
+    observed_begin(&job, &project, viewport, c.rect, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, &project, capture, &c));
     ASSERT_EQ_INT(7, row_calls);
     ASSERT_EQ_INT(34, sample_calls);
@@ -258,7 +262,7 @@ static void test_sample_errors_leave_gaps_and_continue_to_later_equations(void) 
     ASSERT_EQ_INT(EVAL_ERR_DOMAIN, project_evaluate_2d(&project, 0, -1, 0).error);
     ASSERT_EQ_INT(EVAL_ERR_DIV_ZERO, project_evaluate_2d(&project, 1, 0, 0).error);
     ASSERT_EQ_INT(EVAL_ERR_NONFINITE, project_evaluate_2d(&project, 2, 1, 0).error);
-    project_plot2d_begin(&job, viewport, c.rect, 4);
+    project_plot2d_begin(&job, &project, viewport, c.rect, 4);
     ASSERT_EQ_INT(33, render(&job, &project, &c));
     ASSERT_TRUE(c.counts[0] > 0);
     ASSERT_TRUE(c.counts[1] > 0);
@@ -292,11 +296,11 @@ static void test_invalid_inputs_cancel_and_restart(void) {
     commit(&project, 0, "y=x");
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
     project_plot2d_cancel(NULL);
-    project_plot2d_begin(NULL, viewport, rectangle, 4);
+    project_plot2d_begin(NULL, &project, viewport, rectangle, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(NULL, &project, capture, &c));
     project_plot2d_cancel(&job);
     ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, project_plot2d_step(&job, NULL, NULL, NULL));
-    project_plot2d_begin(&job, viewport, rectangle, 4);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 4);
     c = (Capture){.rect = rectangle};
     ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, project_plot2d_step(&job, &project, capture, &c));
     {
@@ -312,22 +316,22 @@ static void test_invalid_inputs_cancel_and_restart(void) {
     }
     c = (Capture){.rect = rectangle};
     for (i = 0; i < sizeof(bad_views) / sizeof(bad_views[0]); i++) {
-        project_plot2d_begin(&job, bad_views[i], rectangle, 4);
+        project_plot2d_begin(&job, &project, bad_views[i], rectangle, 4);
         ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
     }
     for (i = 0; i < sizeof(bad_rects) / sizeof(bad_rects[0]); i++) {
-        project_plot2d_begin(&job, viewport, bad_rects[i], 4);
+        project_plot2d_begin(&job, &project, viewport, bad_rects[i], 4);
         ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
     }
-    project_plot2d_begin(&job, viewport, rectangle, 3);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 3);
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
-    project_plot2d_begin(&job, viewport, rectangle, 4);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, NULL, capture, &c));
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
-    project_plot2d_begin(&job, viewport, rectangle, 4);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 4);
     ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, NULL, &c));
     ASSERT_EQ_INT(0, c.total);
-    project_plot2d_begin(&job, viewport, rectangle, 4);
+    project_plot2d_begin(&job, &project, viewport, rectangle, 4);
     ASSERT_EQ_INT(7, render(&job, &project, &c));
     ASSERT_TRUE(c.total > 0);
     project_plot2d_cancel(&job);
@@ -336,7 +340,87 @@ static void test_invalid_inputs_cancel_and_restart(void) {
     ASSERT_EQ_INT(0, memory_bytes);
 }
 
+static void test_hidden_relations_skip_samples_and_progress_keeps_slot_indices(void) {
+    Project project;
+    ProjectPlot2D job;
+    Capture c = {.rect = {0, 0, 9, 9}};
+    unsigned call, index;
+    project_init_with_memory(&project, counting_memory());
+    commit(&project, 0, "a=2");
+    commit(&project, 2, "y=x+a");
+    commit(&project, 3, "y=x");
+    commit(&project, 4, "y<x");
+    commit(&project, 6, "x=0");
+    commit(&project, 7, "x+y+z=1");
+    commit(&project, 8, "y=q");
+    commit(&project, 9, "2+3");
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 3));
+    ASSERT_TRUE(project_set_draft(&project, 3, "y="));
+    ASSERT_FALSE(project_validate_draft(&project, 3).ok);
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 3));
+    ASSERT_FALSE(project_line_is_visible(&project, 3));
+    row_calls = sample_calls = 0;
+    memset(sampled, 0, sizeof(sampled));
+    observed_begin(&job, &project, viewport, c.rect, 4);
+    ASSERT_EQ_INT(2, project_plot2d_total(&job));
+    ASSERT_EQ_INT(0, project_plot2d_completed(&job));
+    for (call = 0; call < 4; call++) {
+        ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, observed_step(&job, &project, capture, &c));
+        ASSERT_EQ_INT((call + 1) / 2, project_plot2d_completed(&job));
+        ASSERT_EQ_INT(2, project_plot2d_total(&job));
+        ASSERT_EQ_INT(call + 1, row_calls);
+    }
+    ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, &project, capture, &c));
+    ASSERT_TRUE(c.counts[2] > 0);
+    ASSERT_TRUE(c.counts[6] > 0);
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        if (index == 2 || index == 6) ASSERT_TRUE(sampled[index] > 0);
+        else {
+            ASSERT_EQ_INT(0, sampled[index]);
+            ASSERT_EQ_INT(0, c.counts[index]);
+        }
+    }
+    ASSERT_EQ_INT(2, project_plot2d_completed(&job));
+    ASSERT_EQ_INT(2, project_plot2d_total(&job));
+    c = (Capture){.rect = {0, 0, 9, 9}};
+    project_plot2d_begin(&job, &project, viewport, c.rect, 4);
+    ASSERT_EQ_INT(0, project_plot2d_completed(&job));
+    ASSERT_EQ_INT(PROJECT_PLOT2D_PROGRESS, project_plot2d_step(&job, &project, capture, &c));
+    project_plot2d_cancel(&job);
+    ASSERT_EQ_INT(0, project_plot2d_completed(&job));
+    ASSERT_EQ_INT(2, project_plot2d_total(&job));
+    project_dispose(&project);
+    ASSERT_EQ_INT(0, memory_bytes);
+}
+
+static void test_no_visible_drawable_relations_finish_without_plot_rows(void) {
+    Project project;
+    ProjectPlot2D job;
+    Capture c = {.rect = rectangle};
+    project_init_with_memory(&project, counting_memory());
+    commit(&project, 15, "y=x");
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 15));
+    row_calls = sample_calls = 0;
+    observed_begin(&job, &project, viewport, rectangle, 4);
+    ASSERT_EQ_INT(0, project_plot2d_total(&job));
+    ASSERT_EQ_INT(0, project_plot2d_completed(&job));
+    ASSERT_EQ_INT(PROJECT_PLOT2D_DONE, observed_step(&job, &project, capture, &c));
+    ASSERT_EQ_INT(0, row_calls);
+    ASSERT_EQ_INT(0, sample_calls);
+    ASSERT_EQ_INT(0, c.total);
+    ASSERT_EQ_INT(0, project_plot2d_completed(NULL));
+    ASSERT_EQ_INT(0, project_plot2d_total(NULL));
+    project_plot2d_begin(&job, NULL, viewport, rectangle, 4);
+    ASSERT_EQ_INT(PROJECT_PLOT2D_ERROR, project_plot2d_step(&job, &project, capture, &c));
+    ASSERT_EQ_INT(0, project_plot2d_total(&job));
+    ASSERT_EQ_INT(0, project_plot2d_completed(&job));
+    project_dispose(&project);
+    ASSERT_EQ_INT(0, memory_bytes);
+}
+
 void run_project_plot2d_tests(void) {
+    test_hidden_relations_skip_samples_and_progress_keeps_slot_indices();
+    test_no_visible_drawable_relations_finish_without_plot_rows();
     test_mixed_slots_render_retained_equation_with_invalid_draft_visible();
     test_zero_five_and_sixteen_lines_reuse_fixed_memory();
     test_one_underlying_row_per_call_and_no_sampling_skipped_slots();

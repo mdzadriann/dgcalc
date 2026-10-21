@@ -671,7 +671,128 @@ static void test_inverse_trig_definitions_dependencies_and_coordinates(void) {
     project_dispose(&project);
 }
 
+static void test_visibility_defaults_and_only_committed_relations_toggle(void) {
+    static const char *const sources[] = {
+        "a=2", "f(t)=t+a", "2+3", "y=x+a", "x+y+z=1", "y<x"
+    };
+    Project project;
+    unsigned index;
+    project_init(&project);
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&project));
+    ASSERT_FALSE(project.dirty);
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        ASSERT_TRUE(project_line_is_visible(&project, (uint8_t)index));
+        ASSERT_FALSE(project_toggle_line_visibility(&project, (uint8_t)index));
+    }
+    ASSERT_FALSE(project.dirty);
+    for (index = 0; index < sizeof(sources) / sizeof(sources[0]); index++)
+        project_set_and_commit(&project, (uint8_t)index, sources[index]);
+    project.dirty = false;
+    for (index = 0; index < 3; index++) {
+        ASSERT_FALSE(project_toggle_line_visibility(&project, (uint8_t)index));
+        ASSERT_TRUE(project_line_is_visible(&project, (uint8_t)index));
+        ASSERT_FALSE(project.dirty);
+    }
+    for (index = 3; index < 6; index++) {
+        project.dirty = false;
+        ASSERT_TRUE(project_toggle_line_visibility(&project, (uint8_t)index));
+        ASSERT_EQ_INT(UINT16_MAX ^ (1u << index), project_visibility_mask(&project));
+        ASSERT_FALSE(project_line_is_visible(&project, (uint8_t)index));
+        ASSERT_TRUE(project.dirty);
+        project.dirty = false;
+        ASSERT_TRUE(project_toggle_line_visibility(&project, (uint8_t)index));
+        ASSERT_TRUE(project_line_is_visible(&project, (uint8_t)index));
+        ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&project));
+        ASSERT_TRUE(project.dirty);
+    }
+    project.dirty = false;
+    for (index = PROJECT_MAX_EXPRESSIONS; index <= UINT8_MAX; index++) {
+        ASSERT_FALSE(project_line_is_visible(&project, (uint8_t)index));
+        ASSERT_FALSE(project_toggle_line_visibility(&project, (uint8_t)index));
+    }
+    ASSERT_FALSE(project_line_is_visible(NULL, 0));
+    ASSERT_FALSE(project_toggle_line_visibility(NULL, 0));
+    ASSERT_EQ_INT(0, project_visibility_mask(NULL));
+    project_restore_visibility_mask(NULL, 0);
+    ASSERT_FALSE(project.dirty);
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&project));
+    project_dispose(&project);
+}
+
+static void test_hidden_relation_remains_editable_and_evaluable_with_retained_draft(void) {
+    Project project;
+    project_init(&project);
+    project_set_and_commit(&project, 0, "a=2");
+    project_set_and_commit(&project, 15, "y=x+a");
+    project.dirty = false;
+    ASSERT_FALSE(project_toggle_line_visibility(&project, 0));
+    ASSERT_FALSE(project.dirty);
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 15));
+    ASSERT_EQ_INT(0x7fff, project_visibility_mask(&project));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 15, 3, 5).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 15, 3, 5).value);
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
+    project_set_and_commit(&project, 15, "y=x+a+1");
+    ASSERT_FALSE(project_line_is_visible(&project, 15));
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 15, 3, 6).value);
+    ASSERT_TRUE(project_set_draft(&project, 15, "y="));
+    ASSERT_FALSE(project_commit_line(&project, 15).ok);
+    ASSERT_STR_EQ("y=", project_line_display_text(&project, 15));
+    ASSERT_STR_EQ("y=x+a+1", project_line_source(&project, 15));
+    ASSERT_FALSE(project_line_is_visible(&project, 15));
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 15));
+    ASSERT_EQ_INT(EVAL_OK, project_evaluate_2d(&project, 15, 3, 6).error);
+    ASSERT_FLOAT_EQ(0, project_evaluate_2d(&project, 15, 3, 6).value);
+    project_cancel_edit(&project);
+    project.dirty = false;
+    ASSERT_TRUE(project_begin_edit(&project, 15));
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 15));
+    project_cancel_edit(&project);
+    ASSERT_TRUE(project_line_is_visible(&project, 15));
+    ASSERT_TRUE(project.dirty);
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 15));
+    ASSERT_TRUE(project_clear_line(&project, 15));
+    ASSERT_TRUE(project_line_is_visible(&project, 15));
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&project));
+    project_set_and_commit(&project, 15, "y=x");
+    ASSERT_TRUE(project_line_is_visible(&project, 15));
+    ASSERT_TRUE(project_toggle_line_visibility(&project, 15));
+    ASSERT_TRUE(project_set_draft(&project, 15, ""));
+    ASSERT_TRUE(project_commit_line(&project, 15).ok);
+    ASSERT_TRUE(project_line_is_visible(&project, 15));
+    project_dispose(&project);
+}
+
+static void test_visibility_restore_and_replacement_preserve_clean_owner_state(void) {
+    Project destination, staging;
+    project_init(&destination);
+    project_init(&staging);
+    project_set_and_commit(&staging, 15, "y=x");
+    staging.dirty = false;
+    project_restore_visibility_mask(&staging, 0x7fff);
+    ASSERT_EQ_INT(0x7fff, project_visibility_mask(&staging));
+    ASSERT_FALSE(staging.dirty);
+    staging.dirty = true;
+    project_restore_visibility_mask(&staging, 0x7fff);
+    ASSERT_TRUE(staging.dirty);
+    staging.dirty = false;
+    project_replace(&destination, &staging);
+    ASSERT_EQ_INT(0x7fff, project_visibility_mask(&destination));
+    ASSERT_FALSE(destination.dirty);
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&staging));
+    project_restore_visibility_mask(&staging, 0);
+    ASSERT_EQ_INT(0, project_visibility_mask(&staging));
+    ASSERT_FALSE(staging.dirty);
+    project_dispose(&staging);
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&staging));
+    project_dispose(&destination);
+    ASSERT_EQ_INT(UINT16_MAX, project_visibility_mask(&destination));
+}
+
 void run_project_tests(void) {
+    test_visibility_defaults_and_only_committed_relations_toggle();
+    test_hidden_relation_remains_editable_and_evaluable_with_retained_draft();
+    test_visibility_restore_and_replacement_preserve_clean_owner_state();
     test_inverse_trig_definitions_dependencies_and_coordinates();
     test_2d_equalities_return_signed_residuals();
     test_2d_resolution_uses_locals_then_coordinates_then_definitions();

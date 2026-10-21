@@ -47,6 +47,7 @@ typedef struct {
     ParseErrorCode parse_error_before_edit;
     ValidationErrorCode validation_error_before_edit;
     uint16_t error_offset_before_edit;
+    uint16_t visible_mask;
     uint8_t count;
     bool dirty;
     uint8_t count_before_edit;
@@ -81,6 +82,13 @@ uint16_t project_editor_cursor(const Project *project);
 const char *project_line_source(const Project *project, uint8_t index);
 const char *project_line_display_text(const Project *project, uint8_t index);
 bool project_line_has_committed(const Project *project, uint8_t index);
+/* Visibility belongs to slots, independently of edit status and drawability. */
+bool project_line_is_visible(const Project *project, uint8_t index);
+/* Only committed 2D/3D relations toggle; a change marks the project dirty. */
+bool project_toggle_line_visibility(Project *project, uint8_t index);
+uint16_t project_visibility_mask(const Project *project);
+/* Restore validated codec state without changing the project's dirty flag. */
+void project_restore_visibility_mask(Project *project, uint16_t mask);
 ExpressionStatus project_line_status(const Project *project, uint8_t index);
 ExprRole project_line_role(const Project *project, uint8_t index);
 bool project_line_tree(const Project *project, uint8_t index,

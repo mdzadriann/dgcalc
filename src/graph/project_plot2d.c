@@ -23,12 +23,25 @@ static void emit_project(void *user, int16_t x0, int16_t y0,
     context->segment(context->user, context->index, x0, y0, x1, y1);
 }
 
-void project_plot2d_begin(ProjectPlot2D *scheduler, Viewport2D viewport,
-                          GraphRect rect, uint8_t step) {
+void project_plot2d_begin(ProjectPlot2D *scheduler, const Project *project,
+                          Viewport2D viewport, GraphRect rect, uint8_t step) {
+    uint8_t index;
     if (!scheduler) return;
     memset(scheduler, 0, sizeof(*scheduler));
-    if (plot2d_begin(&scheduler->job, viewport, rect, step))
-        scheduler->state = PROJECT_PLOT2D_PROGRESS;
+    if (!project || !plot2d_begin(&scheduler->job, viewport, rect, step)) return;
+    for (index = 0; index < PROJECT_MAX_EXPRESSIONS; index++) {
+        if (project_line_is_visible(project, index) &&
+            project_line_is_drawable_2d(project, index)) scheduler->total++;
+    }
+    scheduler->state = scheduler->total ? PROJECT_PLOT2D_PROGRESS : PROJECT_PLOT2D_DONE;
+}
+
+uint8_t project_plot2d_completed(const ProjectPlot2D *scheduler) {
+    return scheduler ? scheduler->completed : 0;
+}
+
+uint8_t project_plot2d_total(const ProjectPlot2D *scheduler) {
+    return scheduler ? scheduler->total : 0;
 }
 
 ProjectPlot2DStep project_plot2d_step(ProjectPlot2D *scheduler,
@@ -44,7 +57,8 @@ ProjectPlot2DStep project_plot2d_step(ProjectPlot2D *scheduler,
     }
     if (!scheduler->active) {
         while (scheduler->expression_index < PROJECT_MAX_EXPRESSIONS &&
-               !project_line_is_drawable_2d(project, scheduler->expression_index))
+               (!project_line_is_visible(project, scheduler->expression_index) ||
+                !project_line_is_drawable_2d(project, scheduler->expression_index)))
             scheduler->expression_index++;
         if (scheduler->expression_index == PROJECT_MAX_EXPRESSIONS) {
             scheduler->state = PROJECT_PLOT2D_DONE;
@@ -62,6 +76,7 @@ ProjectPlot2DStep project_plot2d_step(ProjectPlot2D *scheduler,
                          emit_project, &context);
     if (result == PLOT2D_ERROR) scheduler->state = PROJECT_PLOT2D_ERROR;
     if (result == PLOT2D_DONE) {
+        scheduler->completed++;
         scheduler->active = false;
         scheduler->expression_index++;
         if (scheduler->expression_index == PROJECT_MAX_EXPRESSIONS)

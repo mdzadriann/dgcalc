@@ -310,7 +310,7 @@ void ce_ui_draw(const AppState *state, const Project *project, bool editing) {
         GraphRect rect = {state->view == APP_VIEW_SPLIT ? 132 : 0, 24,
                           state->view == APP_VIEW_SPLIT ? 188 : 320, 196};
         draw_static_frame(state, project, editing);
-        project_plot2d_begin(&render_job, state->viewport, rect, PLOT2D_COARSE_STEP);
+        project_plot2d_begin(&render_job, project, state->viewport, rect, PLOT2D_COARSE_STEP);
         render_phase = RENDER_COARSE;
     }
 }
@@ -340,7 +340,7 @@ bool ce_ui_render_step(const AppState *state, const Project *project,
     if (render_phase == RENDER_WAIT) {
         if (navigation_active) return true;
         draw_static_frame(state, project, render_editing);
-        project_plot2d_begin(&render_job, state->viewport, render_job.job.rect,
+        project_plot2d_begin(&render_job, project, state->viewport, render_job.job.rect,
                              PLOT2D_FINE_STEP);
         render_phase = RENDER_FINE;
         /* Starting refinement is bounded separately; its first row waits for input. */

@@ -16,13 +16,20 @@ typedef struct {
     /* The embedded job also retains the viewport, rectangle and step for reuse. */
     Plot2DJob job;
     uint8_t expression_index;
+    uint8_t completed;
+    uint8_t total;
     bool active;
     ProjectPlot2DStep state;
 } ProjectPlot2D;
 
-/* Restarts any state. Invalid settings leave ERROR; NULL scheduler is a no-op. */
-void project_plot2d_begin(ProjectPlot2D *scheduler, Viewport2D viewport,
-                          GraphRect rect, uint8_t step);
+/* Restarts and counts visible drawable equations. Invalid settings or NULL
+   project leave ERROR; NULL scheduler is a no-op. Restart after project changes. */
+void project_plot2d_begin(ProjectPlot2D *scheduler, const Project *project,
+                          Viewport2D viewport, GraphRect rect, uint8_t step);
+/* Completed counts whole finished equations; total is fixed at begin.
+   Cancel preserves progress; NULL schedulers return zero. */
+uint8_t project_plot2d_completed(const ProjectPlot2D *scheduler);
+uint8_t project_plot2d_total(const ProjectPlot2D *scheduler);
 /* At most one plot row. NULL scheduler returns ERROR; NULL project/callback
    makes an in-progress scheduler ERROR. Terminal states do no work even with
    NULL arguments. user may be NULL. No supplied pointers survive this call. */

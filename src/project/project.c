@@ -188,6 +188,7 @@ void project_init_with_memory(Project *project, ProjectMemory memory) {
     }
     dependency_graph_clear(&project->dependencies);
     project->memory = memory;
+    project->visible_mask = UINT16_MAX;
     editor_init(&project->editor);
     project->editing_index = PROJECT_MAX_EXPRESSIONS;
 }
@@ -302,6 +303,31 @@ ExpressionStatus project_line_status(const Project *project, uint8_t index) {
                ? project->lines[index].status : EXPRESSION_EMPTY;
 }
 
+bool project_line_is_visible(const Project *project, uint8_t index) {
+    return project != NULL && index < PROJECT_MAX_EXPRESSIONS &&
+           (project->visible_mask & (UINT16_C(1) << index)) != 0;
+}
+
+bool project_toggle_line_visibility(Project *project, uint8_t index) {
+    ExprRole role;
+    if (project == NULL || index >= PROJECT_MAX_EXPRESSIONS) return false;
+    role = project_line_role(project, index);
+    if (role != EXPR_ROLE_RELATION_2D && role != EXPR_ROLE_RELATION_3D)
+        return false;
+    project->visible_mask ^= UINT16_C(1) << index;
+    project->dirty = true;
+    if (project_is_editing(project)) project->dirty_before_edit = true;
+    return true;
+}
+
+uint16_t project_visibility_mask(const Project *project) {
+    return project != NULL ? project->visible_mask : 0;
+}
+
+void project_restore_visibility_mask(Project *project, uint16_t mask) {
+    if (project != NULL) project->visible_mask = mask;
+}
+
 ExprRole project_line_role(const Project *project, uint8_t index) {
     return project_line_has_committed(project, index)
                ? project->lines[index].role : EXPR_ROLE_INVALID;
@@ -371,6 +397,7 @@ bool project_clear_line(Project *project, uint8_t index) {
     line->root = AST_NONE;
     line->status = EXPRESSION_EMPTY;
     project->dirty = true;
+    project->visible_mask |= UINT16_C(1) << index;
     rebuild_dependencies(project);
     return true;
 }
