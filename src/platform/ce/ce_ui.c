@@ -24,6 +24,8 @@ enum {
 static ProjectPlot2D render_job;
 static enum { RENDER_IDLE, RENDER_COARSE, RENDER_WAIT, RENDER_FINE } render_phase;
 static bool render_editing;
+static CeRenderStatus render_status;
+static uint32_t render_generation, job_generation;
 
 static void configure_palette(void) {
     gfx_palette[COLOR_BACKGROUND] = gfx_RGBTo1555(248, 249, 250);
@@ -69,7 +71,52 @@ static void print_clipped(const char *text, int x, int y, uint8_t characters) {
     gfx_PrintStringXY(clipped, x, y);
 }
 
+static void draw_render_header(void) {
+    const char *label;
+    bool active = render_phase != RENDER_IDLE;
+    switch (render_status.state) {
+        case CE_RENDER_COARSE: label = "1/3 Coarse"; break;
+        case CE_RENDER_RELEASE_KEYS: label = "2/3 Release keys"; break;
+        case CE_RENDER_FINE: label = "3/3 Refining"; break;
+        case CE_RENDER_PREVIEW:
+            label = render_status.manual_reload_required
+                        ? "Canceled - preview only" : "2/3 Preview";
+            break;
+        case CE_RENDER_CANCELED: label = "Canceled - not loaded"; break;
+        case CE_RENDER_OUT_OF_DATE: label = "Out of date - press GRAPH/WINDOW"; break;
+        case CE_RENDER_ERROR: label = "Unable to load"; break;
+        default: label = "Current"; break;
+    }
+    gfx_SetColor(COLOR_BLUE);
+    gfx_FillRectangle_NoClip(0, 0, 320, 24);
+    gfx_SetTextFGColor(COLOR_PANEL);
+    gfx_PrintStringXY(label, 6, 2);
+    if (render_status.state == CE_RENDER_COARSE || render_status.state == CE_RENDER_FINE) {
+        gfx_SetTextXY(166, 2);
+        gfx_PrintUInt(render_status.completed, 1);
+        gfx_PrintStringXY("/", 182, 2);
+        gfx_SetTextXY(190, 2);
+        gfx_PrintUInt(render_status.total, 1);
+    }
+    if (render_phase == RENDER_WAIT || render_phase == RENDER_FINE)
+        gfx_PrintStringXY("Preview", 6, 13);
+    if (active) gfx_PrintStringXY("DEL: Cancel", 226, 13);
+}
+
+static void refresh_render_header(void) {
+    uint8_t previous = gfx_GetDraw();
+    gfx_SetDraw(gfx_screen);
+    draw_render_header();
+    gfx_SetDraw(gfx_buffer);
+    draw_render_header();
+    gfx_SetDraw(previous);
+}
+
 static void draw_header(const AppState *state) {
+    if (state->view != APP_VIEW_EXPRESSIONS && state->mode == GRAPH_MODE_2D) {
+        draw_render_header();
+        return;
+    }
     gfx_SetColor(COLOR_BLUE);
     gfx_FillRectangle_NoClip(0, 0, 320, 24);
     gfx_SetTextFGColor(COLOR_PANEL);
@@ -271,8 +318,10 @@ static void draw_graph_panel(GraphRect rect, const Viewport2D *viewport) {
 }
 
 void ce_ui_begin(void) {
+    render_generation++;
     project_plot2d_cancel(&render_job);
     render_phase = RENDER_IDLE;
+    render_status = (CeRenderStatus){CE_RENDER_CURRENT, 0, 0, false};
     gfx_Begin();
     gfx_SetDrawBuffer();
     configure_palette();
@@ -300,19 +349,57 @@ static void draw_static_frame(const AppState *state, const Project *project,
     draw_key_bar(state);
 }
 
-void ce_ui_draw(const AppState *state, const Project *project, bool editing) {
+void ce_ui_draw(const AppState *state, const Project *project, bool editing,
+                bool load_graph) {
+    render_generation++;
     project_plot2d_cancel(&render_job);
     render_phase = RENDER_IDLE;
     render_editing = editing;
-    draw_static_frame(state, project, editing);
-    gfx_SwapDraw();
-    if (state->mode == GRAPH_MODE_2D && state->view != APP_VIEW_EXPRESSIONS) {
+    render_status = (CeRenderStatus){CE_RENDER_OUT_OF_DATE, 0, 0,
+                                     !load_graph && render_status.manual_reload_required};
+    if (load_graph && state->mode == GRAPH_MODE_2D && state->view != APP_VIEW_EXPRESSIONS) {
         GraphRect rect = {state->view == APP_VIEW_SPLIT ? 132 : 0, 24,
                           state->view == APP_VIEW_SPLIT ? 188 : 320, 196};
-        draw_static_frame(state, project, editing);
         project_plot2d_begin(&render_job, project, state->viewport, rect, PLOT2D_COARSE_STEP);
-        render_phase = RENDER_COARSE;
+        job_generation = render_generation;
+        render_status.total = project_plot2d_total(&render_job);
+        render_status.state = render_job.state == PROJECT_PLOT2D_ERROR
+                                  ? CE_RENDER_ERROR : CE_RENDER_COARSE;
+        if (render_status.state != CE_RENDER_ERROR) render_phase = RENDER_COARSE;
     }
+    draw_static_frame(state, project, editing);
+    gfx_SwapDraw();
+    if (state->mode == GRAPH_MODE_2D && state->view != APP_VIEW_EXPRESSIONS)
+        draw_static_frame(state, project, editing);
+}
+
+void ce_ui_refresh(const AppState *state, const Project *project, bool editing) {
+    uint8_t previous = gfx_GetDraw();
+    uint8_t role;
+    render_editing = editing;
+    for (role = gfx_screen; role <= gfx_buffer; role++) {
+        gfx_SetDraw(role);
+        draw_header(state);
+        if (state->view != APP_VIEW_GRAPH)
+            draw_expression_list(state, project,
+                                  state->view == APP_VIEW_SPLIT ? 132 : 320, editing);
+    }
+    gfx_SetDraw(previous);
+}
+
+bool ce_ui_cancel_render(void) {
+    if (render_phase == RENDER_IDLE) return false;
+    render_status.state = render_phase == RENDER_COARSE ? CE_RENDER_CANCELED : CE_RENDER_PREVIEW;
+    render_status.manual_reload_required = true;
+    render_generation++;
+    project_plot2d_cancel(&render_job);
+    render_phase = RENDER_IDLE;
+    refresh_render_header();
+    return true;
+}
+
+CeRenderStatus ce_ui_render_status(void) {
+    return render_status;
 }
 
 static bool any_key_down(void) {
@@ -328,7 +415,7 @@ static bool any_key_down(void) {
 static void draw_segment(void *user, uint8_t index, int16_t x0, int16_t y0,
                           int16_t x1, int16_t y1) {
     static const uint8_t colors[] = {COLOR_BLUE, COLOR_RED, COLOR_GREEN};
-    (void)user;
+    if (*(const uint32_t *)user != render_generation) return;
     gfx_SetColor(colors[index % sizeof(colors)]);
     gfx_Line(x0, y0, x1, y1);
 }
@@ -336,21 +423,54 @@ static void draw_segment(void *user, uint8_t index, int16_t x0, int16_t y0,
 bool ce_ui_render_step(const AppState *state, const Project *project,
                        bool navigation_active) {
     ProjectPlot2DStep result;
+    uint32_t generation = job_generation;
+    uint8_t completed = render_status.completed;
     if (render_phase == RENDER_IDLE) return false;
+    if (generation != render_generation) return false;
     if (render_phase == RENDER_WAIT) {
-        if (navigation_active) return true;
-        draw_static_frame(state, project, render_editing);
+        if (navigation_active) {
+            if (render_status.state != CE_RENDER_RELEASE_KEYS) {
+                render_status.state = CE_RENDER_RELEASE_KEYS;
+                refresh_render_header();
+            }
+            return true;
+        }
         project_plot2d_begin(&render_job, project, state->viewport, render_job.job.rect,
                              PLOT2D_FINE_STEP);
         render_phase = RENDER_FINE;
+        render_status.state = CE_RENDER_FINE;
+        render_status.completed = 0;
+        render_status.total = project_plot2d_total(&render_job);
+        if (render_job.state == PROJECT_PLOT2D_ERROR) {
+            render_phase = RENDER_IDLE;
+            render_status.state = CE_RENDER_ERROR;
+            refresh_render_header();
+            return false;
+        }
+        draw_static_frame(state, project, render_editing);
+        refresh_render_header();
         /* Starting refinement is bounded separately; its first row waits for input. */
         return true;
     }
-    result = project_plot2d_step(&render_job, project, draw_segment, NULL);
-    if (result == PROJECT_PLOT2D_PROGRESS) return true;
-    if (result == PROJECT_PLOT2D_DONE) gfx_SwapDraw();
+    result = project_plot2d_step(&render_job, project, draw_segment, &generation);
+    if (generation != render_generation) return false;
+    render_status.completed = project_plot2d_completed(&render_job);
+    if (result == PROJECT_PLOT2D_PROGRESS) {
+        if (completed != render_status.completed) refresh_render_header();
+        return true;
+    }
     render_phase = result == PROJECT_PLOT2D_DONE && render_phase == RENDER_COARSE
                        ? RENDER_WAIT : RENDER_IDLE;
+    render_status.state = result == PROJECT_PLOT2D_ERROR ? CE_RENDER_ERROR
+                          : render_phase == RENDER_WAIT
+                              ? (navigation_active ? CE_RENDER_RELEASE_KEYS : CE_RENDER_PREVIEW)
+                              : CE_RENDER_CURRENT;
+    if (result == PROJECT_PLOT2D_DONE) {
+        /* Publish the completed geometry and its new label in the same swap. */
+        draw_render_header();
+        gfx_SwapDraw();
+    }
+    refresh_render_header();
     return render_phase != RENDER_IDLE;
 }
 
@@ -487,6 +607,7 @@ AppAction ce_ui_show_message(const char *message) {
 }
 
 void ce_ui_end(void) {
+    render_generation++;
     project_plot2d_cancel(&render_job);
     render_phase = RENDER_IDLE;
     gfx_End();

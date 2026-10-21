@@ -16,6 +16,8 @@ void gfx_Begin(void);
 void gfx_End(void);
 void fake_gfx_set_draw_buffer(void);
 #define gfx_SetDrawBuffer() fake_gfx_set_draw_buffer()
+void gfx_SetDraw(uint8_t location);
+uint8_t gfx_GetDraw(void);
 void gfx_SetTextScale(uint8_t width, uint8_t height);
 void gfx_SetTextFGColor(uint8_t color);
 void gfx_SetTextBGColor(uint8_t color);

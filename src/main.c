@@ -198,7 +198,7 @@ int main(void) {
         AppAction action;
 
         if (redraw) {
-            ce_ui_draw(&app_state, &project, project_is_editing(&project));
+            ce_ui_draw(&app_state, &project, project_is_editing(&project), true);
             redraw = false;
         }
         length_before = editor != NULL ? editor->length : 0;

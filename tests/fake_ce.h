@@ -23,6 +23,9 @@ typedef struct {
     char text[41];
     int x, y, frame;
     uint8_t color;
+    unsigned buffer;
+    int swaps;
+    bool visible;
 } TestPrint;
 
 extern TestLine graph_lines[8192];
@@ -31,6 +34,9 @@ extern TestPrint graph_prints[512];
 extern size_t graph_print_count;
 extern int static_frames;
 extern int swapped_frames[32];
+extern uint8_t buffer_pixels[2][240][320];
+extern unsigned visible_buffer;
+extern char header_text[2][2][81];
 
 typedef enum {
     TEST_COPY_SCREEN_TO_BUFFER,

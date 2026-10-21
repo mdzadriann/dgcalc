@@ -13,10 +13,31 @@ typedef enum {
     CE_DIRTY_QUIT
 } CeDirtyChoice;
 
+typedef enum {
+    CE_RENDER_CURRENT,
+    CE_RENDER_COARSE,
+    CE_RENDER_RELEASE_KEYS,
+    CE_RENDER_FINE,
+    CE_RENDER_PREVIEW,
+    CE_RENDER_CANCELED,
+    CE_RENDER_OUT_OF_DATE,
+    CE_RENDER_ERROR
+} CeRenderState;
+
+typedef struct {
+    CeRenderState state;
+    uint8_t completed;
+    uint8_t total;
+    bool manual_reload_required;
+} CeRenderStatus;
+
 void ce_ui_begin(void);
 void ce_ui_draw(const AppState *state,
                 const Project *project,
-                bool editing);
+                bool editing, bool load_graph);
+void ce_ui_refresh(const AppState *state, const Project *project, bool editing);
+bool ce_ui_cancel_render(void);
+CeRenderStatus ce_ui_render_status(void);
 bool ce_ui_render_step(const AppState *state, const Project *project,
                        bool navigation_active);
 AppAction ce_ui_show_menu(void);
