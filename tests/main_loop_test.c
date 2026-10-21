@@ -217,6 +217,14 @@ void run_main_loop_tests(void) {
         {APP_ACTION_SHOW_SPLIT, NULL, -1, 1, 0, CE_RENDER_COARSE},
         {APP_ACTION_CLEAR_EXPRESSION, NULL, -1, 1, 0, CE_RENDER_PREVIEW}
     };
+    static const LoopStep clear_uncommitted[] = {
+        {APP_ACTION_NONE, NULL, -1, 1, 0, CE_RENDER_COARSE},
+        {APP_ACTION_MOVE_SELECTION_DOWN, NULL, -1, 0, 1, CE_RENDER_COARSE},
+        {APP_ACTION_BEGIN_EDIT, NULL, -1, 0, 1, CE_RENDER_COARSE},
+        {APP_ACTION_NONE, "x=3", -1, 0, 1, CE_RENDER_COARSE},
+        {APP_ACTION_CLEAR_EXPRESSION, NULL, -1, 0, 1, CE_RENDER_COARSE},
+        {APP_ACTION_CLEAR_EXPRESSION, NULL, -1, 0, 0, CE_RENDER_COARSE}
+    };
     static const LoopStep canceled[] = {
         {APP_ACTION_NONE, NULL, -1, 1, 0, CE_RENDER_COARSE},
         {APP_ACTION_CANCEL_RENDER, NULL, -1, 0, 0, CE_RENDER_CANCELED},
@@ -301,6 +309,7 @@ void run_main_loop_tests(void) {
     size_t i;
     storage_ok = true; dirty_choice = CE_DIRTY_CANCEL; initial_view = APP_VIEW_SPLIT;
     run_script(ui_only, sizeof(ui_only) / sizeof(ui_only[0]));
+    run_script(clear_uncommitted, sizeof(clear_uncommitted) / sizeof(clear_uncommitted[0]));
     run_script(changes, sizeof(changes) / sizeof(changes[0]));
     run_script(canceled, sizeof(canceled) / sizeof(canceled[0]));
     run_script(modal, sizeof(modal) / sizeof(modal[0]));

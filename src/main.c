@@ -96,6 +96,7 @@ static bool handle_action(AppAction action, bool *running) {
     uint8_t index = app_state.selected_expression;
     bool changed = false;
     bool reload = false;
+    bool changes_graph = app_action_changes_graph(action);
 
     switch (action) {
         case APP_ACTION_SHOW_EXPRESSIONS:
@@ -158,6 +159,7 @@ static bool handle_action(AppAction action, bool *running) {
             project_cancel_edit(&project);
             break;
         case APP_ACTION_CLEAR_EXPRESSION:
+            changes_graph = project_line_has_committed(&project, index);
             changed = project_clear_line(&project, index);
             break;
         case APP_ACTION_TOGGLE_VISIBILITY:
@@ -235,7 +237,7 @@ static bool handle_action(AppAction action, bool *running) {
             break;
     }
     ui_dirty |= changed;
-    graph_dirty |= changed && app_action_changes_graph(action);
+    graph_dirty |= changed && changes_graph;
     return reload;
 }
 
