@@ -7,29 +7,42 @@
 #include <string.h>
 
 static uint8_t previous_keys[8];
+// shortcut: simultaneous ordinary keys use deterministic keypad order, upgrade to an interrupt ring only if physical tests require chronological ordering
+static uint8_t pending_keys[8];
 static bool alpha_latched;
 static bool second_latched;
 
-static kb_lkey_t first_new_key(void) {
-    kb_lkey_t result = 0;
+static void capture_new_keys(void) {
     uint8_t group;
 
     for (group = 1; group <= 7; group++) {
         uint8_t current = kb_Data[group];
-        uint8_t pressed = (uint8_t)(current & (uint8_t)~previous_keys[group]);
-        uint8_t bit;
+        pending_keys[group] |= (uint8_t)(current & (uint8_t)~previous_keys[group]);
         previous_keys[group] = current;
-        if (result != 0) {
-            continue;
-        }
+    }
+}
+
+static kb_lkey_t next_pending_key(void) {
+    uint8_t group;
+
+    if ((pending_keys[kb_Key2nd >> 8] & (uint8_t)kb_Key2nd) != 0) {
+        pending_keys[kb_Key2nd >> 8] &= (uint8_t)~kb_Key2nd;
+        return kb_Key2nd;
+    }
+    if ((pending_keys[kb_KeyAlpha >> 8] & (uint8_t)kb_KeyAlpha) != 0) {
+        pending_keys[kb_KeyAlpha >> 8] &= (uint8_t)~kb_KeyAlpha;
+        return kb_KeyAlpha;
+    }
+    for (group = 1; group <= 7; group++) {
+        uint8_t bit;
         for (bit = 1; bit != 0; bit <<= 1) {
-            if ((pressed & bit) != 0) {
-                result = (kb_lkey_t)(((kb_lkey_t)group << 8) | bit);
-                break;
+            if ((pending_keys[group] & bit) != 0) {
+                pending_keys[group] &= (uint8_t)~bit;
+                return (kb_lkey_t)(((kb_lkey_t)group << 8) | bit);
             }
         }
     }
-    return result;
+    return 0;
 }
 
 static bool insert_text(EditorBuffer *editor, const char *text) {
@@ -132,14 +145,21 @@ void ce_input_begin(void) {
     for (group = 1; group <= 7; group++) {
         previous_keys[group] = kb_Data[group];
     }
+    ce_input_discard_pending();
     alpha_latched = false;
     second_latched = false;
 }
 
+void ce_input_discard_pending(void) {
+    memset(pending_keys, 0, sizeof(pending_keys));
+}
+
 AppAction ce_input_poll(EditorBuffer *active_editor, bool editing, AppView view) {
-    kb_lkey_t key = first_new_key();
+    kb_lkey_t key;
     const char *text;
 
+    capture_new_keys();
+    key = next_pending_key();
     if (key == 0) {
         return APP_ACTION_NONE;
     }
@@ -150,31 +170,37 @@ AppAction ce_input_poll(EditorBuffer *active_editor, bool editing, AppView view)
     }
     if (second_latched && key == kb_KeyMode) {
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_QUIT;
     }
     if (key == kb_KeyYequ) {
         alpha_latched = false;
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_SHOW_EXPRESSIONS;
     }
     if (key == kb_KeyWindow) {
         alpha_latched = false;
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_SHOW_SPLIT;
     }
     if (key == kb_KeyZoom) {
         alpha_latched = false;
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_TOGGLE_GRAPH_MODE;
     }
     if (key == kb_KeyTrace) {
         alpha_latched = false;
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_OPEN_MENU;
     }
     if (key == kb_KeyGraph) {
         alpha_latched = false;
         second_latched = false;
+        ce_input_discard_pending();
         return APP_ACTION_SHOW_GRAPH;
     }
     if (view == APP_VIEW_GRAPH) {

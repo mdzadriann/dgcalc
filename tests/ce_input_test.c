@@ -14,6 +14,125 @@ static AppAction press(kb_lkey_t key, EditorBuffer *editor, bool editing,
     return ce_input_poll(editor, editing, view);
 }
 
+static void hold_keys(kb_lkey_t first, kb_lkey_t second) {
+    memset(kb_Data, 0, sizeof(kb_Data));
+    kb_Data[first >> 8] |= (uint8_t)first;
+    kb_Data[second >> 8] |= (uint8_t)second;
+}
+
+static void test_overlapping_edges_are_delivered_once_and_can_be_repressed(void) {
+    EditorBuffer editor;
+
+    reset_fake_hardware();
+    ce_input_begin();
+    editor_init(&editor);
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+    ASSERT_STR_EQ("x", editor.text);
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+    ASSERT_STR_EQ("x+", editor.text);
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+    ASSERT_STR_EQ("x+", editor.text);
+    hold_keys(0, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+x", editor.text);
+    ce_input_end();
+}
+
+static void test_same_scan_modifiers_precede_ordinary_keys(void) {
+    static const struct { kb_lkey_t modifier, key; const char *text; } cases[] = {
+        {kb_Key2nd, kb_KeySquare, "sqrt("},
+        {kb_KeyAlpha, kb_KeySquare, "i"}
+    };
+    EditorBuffer editor;
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        reset_fake_hardware();
+        ce_input_begin();
+        editor_init(&editor);
+        hold_keys(cases[i].modifier, cases[i].key);
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+        ASSERT_STR_EQ("", editor.text);
+        (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ(cases[i].text, editor.text);
+        (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ(cases[i].text, editor.text);
+        (void)press(kb_Key1, &editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ(i == 0 ? "sqrt(1" : "i1", editor.text);
+        ce_input_end();
+    }
+    reset_fake_hardware();
+    ce_input_begin();
+    hold_keys(kb_Key2nd, kb_KeyMode);
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(NULL, false, APP_VIEW_GRAPH));
+    ASSERT_EQ_INT(APP_ACTION_QUIT, ce_input_poll(NULL, false, APP_VIEW_GRAPH));
+    ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(NULL, false, APP_VIEW_GRAPH));
+    ce_input_end();
+}
+
+static void test_context_actions_discard_queued_ordinary_edges(void) {
+    static const struct { kb_lkey_t key; AppAction action; } cases[] = {
+        {kb_KeyYequ, APP_ACTION_SHOW_EXPRESSIONS},
+        {kb_KeyWindow, APP_ACTION_SHOW_SPLIT},
+        {kb_KeyZoom, APP_ACTION_TOGGLE_GRAPH_MODE},
+        {kb_KeyTrace, APP_ACTION_OPEN_MENU},
+        {kb_KeyGraph, APP_ACTION_SHOW_GRAPH}
+    };
+    EditorBuffer editor;
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        reset_fake_hardware();
+        ce_input_begin();
+        editor_init(&editor);
+        hold_keys(cases[i].key, kb_KeyGraphVar);
+        kb_Data[kb_KeyAdd >> 8] |= (uint8_t)kb_KeyAdd;
+        ASSERT_EQ_INT(cases[i].action, ce_input_poll(&editor, true, APP_VIEW_SPLIT));
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+        ASSERT_EQ_INT(APP_ACTION_NONE, ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS));
+        ASSERT_STR_EQ("", editor.text);
+        (void)press(kb_Key1, &editor, true, APP_VIEW_EXPRESSIONS);
+        ASSERT_STR_EQ("1", editor.text);
+        ce_input_end();
+    }
+}
+
+static void test_pending_edges_survive_release_and_discard_does_not_requeue_held_keys(void) {
+    EditorBuffer editor;
+
+    reset_fake_hardware();
+    ce_input_begin();
+    editor_init(&editor);
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    hold_keys(0, 0);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+", editor.text);
+
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ce_input_discard_pending();
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+x", editor.text);
+
+    (void)press(kb_KeyAlpha, &editor, true, APP_VIEW_EXPRESSIONS);
+    ce_input_discard_pending();
+    (void)press(kb_KeyMath, &editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+xa", editor.text);
+
+    hold_keys(kb_KeyGraphVar, kb_KeyAdd);
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ce_input_begin();
+    (void)ce_input_poll(&editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+xax", editor.text);
+    (void)press(kb_Key1, &editor, true, APP_VIEW_EXPRESSIONS);
+    ASSERT_STR_EQ("x+xax1", editor.text);
+    ce_input_end();
+}
+
 static void test_navigation_matrix_and_hidden_editor_safety(void) {
     static const struct { kb_lkey_t key; AppAction action; } graph[] = {
         {kb_KeyLeft, APP_ACTION_PAN_LEFT},
@@ -215,6 +334,10 @@ static void test_modal_menu_consumes_navigation_without_moving_background(void) 
 }
 
 void run_ce_input_tests(void) {
+    test_overlapping_edges_are_delivered_once_and_can_be_repressed();
+    test_same_scan_modifiers_precede_ordinary_keys();
+    test_context_actions_discard_queued_ordinary_edges();
+    test_pending_edges_survive_release_and_discard_does_not_requeue_held_keys();
     test_navigation_matrix_and_hidden_editor_safety();
     test_expression_and_split_editing_still_work();
     test_top_keys_and_quit_in_every_view_and_edit_state();
