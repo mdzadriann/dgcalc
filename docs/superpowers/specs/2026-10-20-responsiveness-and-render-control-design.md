@@ -1,7 +1,7 @@
 # Milestone 2B: Responsiveness and Render Control Design
 
 **Date:** 2026-10-20
-**Status:** Approved in conversation; awaiting written-spec review
+**Status:** Approved by the user on 2026-10-20
 
 ## Purpose
 
