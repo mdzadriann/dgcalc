@@ -54,6 +54,21 @@ static EvalResult eval_call(uint8_t name,
         case AST_NAME_TAN:
             value = tanf(argument);
             break;
+        case AST_NAME_ARCSIN:
+            if (argument < -1.0f || argument > 1.0f) {
+                return make_result(0.0f, EVAL_ERR_DOMAIN);
+            }
+            value = asinf(argument);
+            break;
+        case AST_NAME_ARCCOS:
+            if (argument < -1.0f || argument > 1.0f) {
+                return make_result(0.0f, EVAL_ERR_DOMAIN);
+            }
+            value = acosf(argument);
+            break;
+        case AST_NAME_ARCTAN:
+            value = atanf(argument);
+            break;
         case AST_NAME_SQRT:
             if (argument < 0.0f) {
                 return make_result(0.0f, EVAL_ERR_DOMAIN);

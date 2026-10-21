@@ -454,7 +454,37 @@ static void test_modal_menu_consumes_navigation_without_moving_background(void) 
     ce_input_end();
 }
 
+static void test_second_trig_keys_insert_inverse_names_and_consume_modifier(void) {
+    static const struct { kb_lkey_t key; const char *text, *temporary, *normal; } cases[] = {
+        {kb_KeySin, "arcsin(", "abs(", "sin("},
+        {kb_KeyCos, "arccos(", "exp(", "cos("},
+        {kb_KeyTan, "arctan(", "floor(", "tan("}
+    };
+    EditorBuffer editor;
+    AppView view;
+    size_t index;
+
+    for (view = APP_VIEW_EXPRESSIONS; view <= APP_VIEW_SPLIT; view++) {
+        reset_fake_hardware();
+        ce_input_begin();
+        editor_init(&editor);
+        for (index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+            ASSERT_TRUE(editor_set_text(&editor, ""));
+            (void)press(kb_Key2nd, &editor, true, view);
+            (void)press(cases[index].key, &editor, true, view);
+            ASSERT_STR_EQ(cases[index].text, editor.text);
+            ASSERT_TRUE(strstr(editor.text, cases[index].temporary) == NULL);
+            ASSERT_EQ_INT(7, editor.cursor);
+            ASSERT_TRUE(editor_set_text(&editor, ""));
+            (void)press(cases[index].key, &editor, true, view);
+            ASSERT_STR_EQ(cases[index].normal, editor.text);
+        }
+        ce_input_end();
+    }
+}
+
 void run_ce_input_tests(void) {
+    test_second_trig_keys_insert_inverse_names_and_consume_modifier();
     test_math_cycles_complete_relations_at_each_caret_position();
     test_math_inserts_locally_and_rejects_invalid_clusters();
     test_math_growth_is_transactional_at_capacity();

@@ -640,7 +640,39 @@ static void test_2d_sampling_does_not_allocate_or_mutate_project(void) {
     ASSERT_EQ_INT(0, memory_bytes);
 }
 
+static void test_inverse_trig_definitions_dependencies_and_coordinates(void) {
+    Project project;
+    EvalResult result;
+
+    project_init(&project);
+    project_set_and_commit(&project, 0, "b=0");
+    project_set_and_commit(&project, 1, "a=arcsin(b)+arccos(b)+arctan(b)");
+    project_set_and_commit(&project, 2, "f(t)=arcsin(t)+arccos(t)+arctan(t)+a");
+    project_set_and_commit(&project, 3, "y=f(x)");
+    ASSERT_EQ_INT(1, project.dependencies.dependencies[1]);
+    ASSERT_EQ_INT(2, project.dependencies.dependencies[2]);
+    ASSERT_EQ_INT(4, project.dependencies.dependencies[3]);
+    ASSERT_EQ_INT(EXPRESSION_VALID, project_line_status(&project, 3));
+    result = project_evaluate_line(&project, 1);
+    ASSERT_EQ_INT(EVAL_OK, result.error);
+    ASSERT_FLOAT_EQ(1.5707963f, result.value);
+    ASSERT_TRUE(project_line_is_drawable_2d(&project, 3));
+    result = project_evaluate_2d(&project, 3, 0.0f, 3.1415927f);
+    ASSERT_EQ_INT(EVAL_OK, result.error);
+    ASSERT_FLOAT_EQ(0.0f, result.value);
+    project_set_and_commit(&project, 0, "b=1");
+    ASSERT_FLOAT_EQ(2.3561945f, project_evaluate_line(&project, 1).value);
+    result = project_evaluate_2d(&project, 3, 0.0f, 3.9269908f);
+    ASSERT_EQ_INT(EVAL_OK, result.error);
+    ASSERT_FLOAT_EQ(0.0f, result.value);
+    ASSERT_EQ_INT(EVAL_ERR_DOMAIN, project_evaluate_2d(&project, 3, 2, 0).error);
+    ASSERT_EQ_INT(EVAL_ERR_NONFINITE,
+                  project_evaluate_2d(&project, 3, INFINITY, 0).error);
+    project_dispose(&project);
+}
+
 void run_project_tests(void) {
+    test_inverse_trig_definitions_dependencies_and_coordinates();
     test_2d_equalities_return_signed_residuals();
     test_2d_resolution_uses_locals_then_coordinates_then_definitions();
     test_2d_boundary_preserves_committed_graphs_during_invalid_drafts();

@@ -45,7 +45,10 @@ typedef enum {
     AST_NAME_LN,
     AST_NAME_LOG,
     AST_NAME_FLOOR,
-    AST_NAME_CEIL
+    AST_NAME_CEIL,
+    AST_NAME_ARCSIN,
+    AST_NAME_ARCCOS,
+    AST_NAME_ARCTAN
 } AstName;
 
 typedef struct {

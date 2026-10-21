@@ -145,9 +145,9 @@ static char alpha_character(kb_lkey_t key) {
 static const char *second_text(kb_lkey_t key) {
     switch (key) {
         case kb_KeySquare: return "sqrt(";
-        case kb_KeySin: return "abs(";
-        case kb_KeyCos: return "exp(";
-        case kb_KeyTan: return "floor(";
+        case kb_KeySin: return "arcsin(";
+        case kb_KeyCos: return "arccos(";
+        case kb_KeyTan: return "arctan(";
         default: return NULL;
     }
 }

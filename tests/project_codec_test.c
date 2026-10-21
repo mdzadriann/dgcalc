@@ -717,9 +717,38 @@ static void test_both_versions_truncate_and_fuzz_valid_documents(void) {
     }
 }
 
+static void test_inverse_trig_sources_round_trip_through_generic_codec(void) {
+    static const char *const sources[] = {"a=arcsin(1)", "b=arccos(0)", "c=arctan(1)"};
+    static const float values[] = {1.5707963f, 1.5707963f, 0.7853982f};
+    AppState state, loaded;
+    CodecError error;
+    size_t length, index;
+
+    project_dispose(&source_project);
+    app_state_init(&state);
+    for (index = 0; index < sizeof(sources) / sizeof(sources[0]); index++) {
+        set_and_commit(&source_project, (uint8_t)index, sources[index]);
+    }
+    length = project_encode(&state, &source_project, encoded, sizeof(encoded), &error);
+    ASSERT_TRUE(length > 0);
+    ASSERT_EQ_INT(CODEC_OK, error);
+    ASSERT_TRUE(project_validate(encoded, length, &error));
+    ASSERT_TRUE(project_decode(&loaded, &destination_project, encoded, length, &error));
+    for (index = 0; index < sizeof(sources) / sizeof(sources[0]); index++) {
+        EvalResult result = project_evaluate_line(&destination_project, (uint8_t)index);
+        ASSERT_STR_EQ(sources[index], project_line_source(&destination_project, (uint8_t)index));
+        ASSERT_EQ_INT(EVAL_OK, result.error);
+        ASSERT_FLOAT_EQ(values[index], result.value);
+    }
+    ASSERT_EQ_INT(length, project_encode(&loaded, &destination_project,
+                                        damaged, sizeof(damaged), &error));
+    ASSERT_TRUE(memcmp(encoded, damaged, length) == 0);
+}
+
 void run_project_codec_tests(void) {
     project_init(&source_project);
     project_init(&destination_project);
+    test_inverse_trig_sources_round_trip_through_generic_codec();
     test_v1_fixture_migrates_with_default_viewport();
     test_v2_exact_bytes_and_clean_viewport_save();
     test_v2_omits_a_draft_when_editing_an_unselected_line();

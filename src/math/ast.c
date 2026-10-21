@@ -18,7 +18,10 @@ static const NamedIdentifier named_identifiers[] = {
     {"ln", AST_NAME_LN},
     {"log", AST_NAME_LOG},
     {"floor", AST_NAME_FLOOR},
-    {"ceil", AST_NAME_CEIL}
+    {"ceil", AST_NAME_CEIL},
+    {"arcsin", AST_NAME_ARCSIN},
+    {"arccos", AST_NAME_ARCCOS},
+    {"arctan", AST_NAME_ARCTAN}
 };
 
 static const char letter_names[] =

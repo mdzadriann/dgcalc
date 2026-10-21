@@ -157,7 +157,29 @@ static void test_parser_stops_at_fixed_limits(void) {
                   parse_repeated_additions(AST_MAX_NODES + 1).code);
 }
 
+static void test_inverse_trig_names_parse_and_round_trip(void) {
+    static const char *const names[] = {"arcsin", "arccos", "arctan"};
+    static const char *const sources[] = {"arcsin(0)", "arccos(0)", "arctan(0)"};
+    static const char *const aliases[] = {"asin(0)", "acos(0)", "atan(0)"};
+    AstArena arena;
+    size_t index;
+
+    for (index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        uint8_t name = 0;
+        ParseResult parsed = parser_parse(sources[index], &arena);
+        ASSERT_TRUE(parsed.ok);
+        ASSERT_TRUE(ast_name_from_text(names[index], strlen(names[index]), &name));
+        ASSERT_STR_EQ(names[index], ast_name_text(name));
+        if (parsed.ok) {
+            ASSERT_EQ_INT(AST_CALL, arena.nodes[parsed.root].kind);
+            ASSERT_STR_EQ(names[index], ast_name_text(arena.nodes[parsed.root].name));
+        }
+        ASSERT_FALSE(parser_parse(aliases[index], &arena).ok);
+    }
+}
+
 void run_parser_tests(void) {
+    test_inverse_trig_names_parse_and_round_trip();
     test_parser_respects_precedence_and_implicit_multiplication();
     test_parser_accepts_relations_in_either_direction();
     test_parser_stops_at_fixed_limits();

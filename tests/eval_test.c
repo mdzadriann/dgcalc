@@ -142,7 +142,60 @@ static void test_validator_recognizes_definitions_and_rejects_constants(void) {
                   validate_source("x(t)=t").error);
 }
 
+static void test_inverse_trig_evaluates_in_radians(void) {
+    static const struct { const char *source; float value; } cases[] = {
+        {"arcsin(0)", 0.0f}, {"arcsin(1)", 1.5707963f},
+        {"arcsin(-1)", -1.5707963f}, {"arcsin(0.5)", 0.5235988f},
+        {"arccos(1)", 0.0f}, {"arccos(0)", 1.5707963f},
+        {"arccos(-1)", 3.1415927f}, {"arccos(0.5)", 1.0471976f},
+        {"arctan(0)", 0.0f}, {"arctan(1)", 0.7853982f},
+        {"arctan(-1)", -0.7853982f}, {"arctan(2)", 1.1071487f},
+        {"arctan(3.402823466e38)", 1.5707963f},
+        {"arctan(-3.402823466e38)", -1.5707963f}
+    };
+    size_t index;
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        EvalResult result = eval_source(cases[index].source);
+        ASSERT_EQ_INT(EVAL_OK, result.error);
+        ASSERT_FLOAT_EQ(cases[index].value, result.value);
+    }
+}
+
+static void test_inverse_trig_preserves_domain_and_nonfinite_errors(void) {
+    static const char *const domain[] = {
+        "arcsin(1.0001)", "arcsin(-1.0001)",
+        "arccos(1.0001)", "arccos(-1.0001)"
+    };
+    static const char *const calls[] = {"arcsin(0)", "arccos(0)", "arctan(0)"};
+    static const float nonfinite[] = {NAN, INFINITY, -INFINITY};
+    static const char *const reserved[] = {
+        "arcsin(x)=x", "arccos(x)=x", "arctan(x)=x",
+        "arcsin=1", "arccos=1", "arctan=1"
+    };
+    size_t index, input;
+
+    for (index = 0; index < sizeof(domain) / sizeof(domain[0]); index++) {
+        ASSERT_EQ_INT(EVAL_ERR_DOMAIN, eval_source(domain[index]).error);
+    }
+    for (index = 0; index < sizeof(calls) / sizeof(calls[0]); index++) {
+        AstArena arena;
+        ParseResult parsed = parser_parse(calls[index], &arena);
+        ASSERT_TRUE(parsed.ok);
+        if (!parsed.ok) continue;
+        for (input = 0; input < sizeof(nonfinite) / sizeof(nonfinite[0]); input++) {
+            arena.nodes[arena.nodes[parsed.root].left].number = nonfinite[input];
+            ASSERT_EQ_INT(EVAL_ERR_NONFINITE,
+                          expression_eval(ast_arena_view(&arena), parsed.root, NULL).error);
+        }
+    }
+    for (index = 0; index < sizeof(reserved) / sizeof(reserved[0]); index++) {
+        ASSERT_EQ_INT(VALIDATION_ERR_DEFINITION, validate_source(reserved[index]).error);
+    }
+}
+
 void run_eval_tests(void) {
+    test_inverse_trig_evaluates_in_radians();
+    test_inverse_trig_preserves_domain_and_nonfinite_errors();
     test_evaluator_handles_arithmetic_and_builtins();
     test_evaluator_reports_math_errors();
     test_evaluator_accepts_a_compact_ast_view();
