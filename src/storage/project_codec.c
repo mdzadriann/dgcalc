@@ -10,6 +10,7 @@
 #define CODEC_HEADER_BYTES 13u
 #define CODEC_V1_METADATA_BYTES 4u
 #define CODEC_V2_METADATA_BYTES 16u
+#define CODEC_V3_METADATA_BYTES 18u
 
 _Static_assert(sizeof(float) == sizeof(uint32_t) && FLT_RADIX == 2 &&
                    FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
@@ -118,7 +119,7 @@ size_t project_encode(const AppState *state,
                       CodecError *error) {
     size_t committed_lengths[PROJECT_MAX_EXPRESSIONS];
     size_t draft_lengths[PROJECT_MAX_EXPRESSIONS];
-    size_t needed = CODEC_HEADER_BYTES + CODEC_V2_METADATA_BYTES;
+    size_t needed = CODEC_HEADER_BYTES + CODEC_V3_METADATA_BYTES;
     size_t offset;
     uint8_t index;
 
@@ -159,6 +160,8 @@ size_t project_encode(const AppState *state,
     offset += 4;
     write_float(&output[offset], state->viewport.units_per_pixel);
     offset += 4;
+    write_u16(&output[offset], project_visibility_mask(project));
+    offset += 2;
 
     for (index = 0; index < project->count; index++) {
         size_t committed = committed_lengths[index];
@@ -303,6 +306,7 @@ typedef struct {
     uint8_t view;
     uint8_t selected;
     uint8_t count;
+    uint16_t visible_mask;
     size_t bytes;
     Viewport2D viewport;
 } CodecMetadata;
@@ -321,16 +325,17 @@ static bool validate_document(const uint8_t *input,
         set_error(error, CODEC_ERR_MAGIC);
         return false;
     }
-    if (input[4] != 1 && input[4] != PROJECT_FORMAT_VERSION) {
+    if (input[4] != 1 && input[4] != 2 && input[4] != PROJECT_FORMAT_VERSION) {
         set_error(error, CODEC_ERR_VERSION);
         return false;
     }
     metadata->bytes = input[4] == 1 ? CODEC_V1_METADATA_BYTES
-                                   : CODEC_V2_METADATA_BYTES;
+                     : input[4] == 2 ? CODEC_V2_METADATA_BYTES
+                                     : CODEC_V3_METADATA_BYTES;
 
     payload_length = read_u32(&input[5]);
     if (payload_length > PROJECT_MAX_BYTES - CODEC_HEADER_BYTES -
-                             CODEC_V2_METADATA_BYTES + metadata->bytes ||
+                             CODEC_V3_METADATA_BYTES + metadata->bytes ||
         (size_t)payload_length + CODEC_HEADER_BYTES != length ||
         payload_length < metadata->bytes) {
         set_error(error, CODEC_ERR_LENGTH);
@@ -347,11 +352,13 @@ static bool validate_document(const uint8_t *input,
     metadata->selected = input[15];
     metadata->count = input[16];
     viewport2d_init(&metadata->viewport);
-    if (input[4] == PROJECT_FORMAT_VERSION) {
+    if (input[4] >= 2) {
         metadata->viewport.center_x = read_float(&input[17]);
         metadata->viewport.center_y = read_float(&input[21]);
         metadata->viewport.units_per_pixel = read_float(&input[25]);
     }
+    metadata->visible_mask = input[4] == 3 ? read_u16(&input[29]) : UINT16_MAX;
+    metadata->visible_mask &= (uint16_t)(UINT16_MAX >> (16 - PROJECT_MAX_EXPRESSIONS));
     if (metadata->mode > GRAPH_MODE_3D || metadata->view > APP_VIEW_GRAPH ||
         metadata->selected >= PROJECT_MAX_EXPRESSIONS ||
         metadata->count > PROJECT_MAX_EXPRESSIONS ||
@@ -441,6 +448,7 @@ bool project_decode(AppState *state_destination,
 
     staging.count = metadata.count;
     staging.dirty = false;
+    project_restore_visibility_mask(&staging, metadata.visible_mask);
     project_replace(project_destination, &staging);
     *state_destination = staging_state;
     set_error(error, CODEC_OK);

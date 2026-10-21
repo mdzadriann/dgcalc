@@ -15,7 +15,7 @@ static void write_test_u32(uint8_t *output, uint32_t value) {
     for (byte = 0; byte < 4; byte++) output[byte] = (uint8_t)(value >> (8 * byte));
 }
 
-/* Independent, bit-at-a-time fixture CRC; never use the encoder to make v1. */
+/* Fixture bytes and CRC are independent of the encoder. */
 static uint32_t fixture_crc(const uint8_t *input, size_t length) {
     uint32_t crc = UINT32_MAX;
     size_t index;
@@ -67,6 +67,27 @@ static size_t make_legacy_project(void) {
     return make_v1_fixture(encoded, 0, 2, committed, drafts);
 }
 
+static size_t make_version_fixture(uint8_t *output, unsigned version) {
+    static const uint8_t v3[] = {
+        'D', 'G', 'C', 'E', 3, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 0, 2,
+        0, 0, 0xC0, 0x3F, 0, 0, 0x10, 0xC0, 0, 0, 0x80, 0x3E,
+        0xA5, 0x5A,
+        3, 0, 'a', '=', '2', 2, 0, 'a', '=',
+        5, 0, 'b', '=', 'a', '+', '3', 5, 0, 'b', '=', 'a', '+', '3'
+    };
+    size_t length = sizeof(v3);
+    memcpy(output, v3, length);
+    if (version < 3) {
+        size_t start = version == 1 ? 17 : 29;
+        memmove(output + start, output + 31, length - 31);
+        length -= 31 - start;
+    }
+    output[4] = (uint8_t)version;
+    repair_fixture(output, length);
+    return length;
+}
+
 static void set_and_commit(Project *project, uint8_t index, const char *source) {
     ASSERT_TRUE(project_set_draft(project, index, source));
     ASSERT_TRUE(project_commit_line(project, index).ok);
@@ -96,6 +117,7 @@ static size_t make_encoded_project(AppState *state) {
     set_and_commit(&source_project, 1, "b=a+3");
     ASSERT_TRUE(project_set_draft(&source_project, 0, "a="));
     ASSERT_FALSE(project_commit_line(&source_project, 0).ok);
+    project_restore_visibility_mask(&source_project, 0xA55A);
 
     length = project_encode(state,
                             &source_project,
@@ -112,6 +134,7 @@ static void test_v1_fixture_migrates_with_default_viewport(void) {
     Viewport2D defaults;
     CodecError error;
     size_t length = make_legacy_project();
+    project_restore_visibility_mask(&destination_project, 0);
     ASSERT_EQ_INT(40, length);
     ASSERT_EQ_INT(3, encoded[17]);
     ASSERT_EQ_INT('a', encoded[19]);
@@ -132,19 +155,26 @@ static void test_v1_fixture_migrates_with_default_viewport(void) {
     ASSERT_EQ_INT(0, project_editing_index(&destination_project));
     ASSERT_FLOAT_EQ(5, project_evaluate_line(&destination_project, 1).value);
     ASSERT_FALSE(destination_project.dirty);
+    ASSERT_EQ_INT(0xFFFF, project_visibility_mask(&destination_project));
 }
 
-static void test_v2_exact_bytes_and_clean_viewport_save(void) {
+static void test_v3_exact_bytes_and_clean_viewport_save(void) {
     static const uint8_t payload[] = {
         1, 1, 0, 2,
         0, 0, 0xC0, 0x3F, 0, 0, 0x10, 0xC0, 0, 0, 0x80, 0x3E,
+        0x5A, 0xA5,
         3, 0, 'a', '=', '2', 2, 0, 'a', '=',
         5, 0, 'b', '=', 'a', '+', '3', 5, 0, 'b', '=', 'a', '+', '3'
     };
     AppState state;
     CodecError error;
     size_t length = make_encoded_project(&state);
-    ASSERT_EQ_INT(2, encoded[4]);
+    ASSERT_EQ_INT(3, encoded[4]);
+    ASSERT_EQ_INT(54, length);
+    ASSERT_EQ_INT(0x5A, encoded[29]);
+    ASSERT_EQ_INT(0xA5, encoded[30]);
+    ASSERT_EQ_INT(3, encoded[31]);
+    ASSERT_EQ_INT('a', encoded[33]);
     ASSERT_EQ_INT(13 + sizeof(payload), length);
     ASSERT_TRUE(memcmp(encoded + 13, payload, sizeof(payload)) == 0);
     ASSERT_EQ_INT(sizeof(payload), encoded[5]);
@@ -160,11 +190,12 @@ static void test_v2_exact_bytes_and_clean_viewport_save(void) {
         AppState loaded;
         ASSERT_TRUE(project_decode(&loaded, &destination_project, encoded, length, &error));
         assert_state_equal(&state, &loaded);
+        ASSERT_EQ_INT(0xA55A, project_visibility_mask(&destination_project));
         ASSERT_FALSE(destination_project.dirty);
     }
 }
 
-static void test_v2_omits_a_draft_when_editing_an_unselected_line(void) {
+static void test_v3_omits_a_draft_when_editing_an_unselected_line(void) {
     AppState state;
     AppState loaded;
     CodecError error;
@@ -175,8 +206,78 @@ static void test_v2_omits_a_draft_when_editing_an_unselected_line(void) {
     ASSERT_TRUE(project_decode(&loaded, &destination_project, encoded, length, &error));
     ASSERT_STR_EQ("a=2", project_line_display_text(&destination_project, 0));
     ASSERT_FALSE(project_is_editing(&destination_project));
-    ASSERT_EQ_INT(3, encoded[34]); /* First draft length, absolute v2 offset. */
-    ASSERT_TRUE(memcmp(encoded + 36, "a=2", 3) == 0);
+    ASSERT_EQ_INT(3, encoded[36]); /* First draft length, absolute v3 offset. */
+    ASSERT_TRUE(memcmp(encoded + 38, "a=2", 3) == 0);
+}
+
+static void test_fixed_versions_restore_viewport_content_and_slot_visibility(void) {
+    static const uint16_t masks[] = {0, 0xFFFF, 0x8000, 0x0001, 0x5AA5};
+    unsigned version, mask;
+    for (version = 1; version <= 3; version++) {
+        for (mask = 0; mask < sizeof(masks) / sizeof(masks[0]); mask++) {
+            AppState state;
+            CodecError error;
+            size_t length = make_version_fixture(encoded, version);
+            if (version == 3) {
+                encoded[29] = (uint8_t)masks[mask];
+                encoded[30] = (uint8_t)(masks[mask] >> 8);
+                repair_fixture(encoded, length);
+            }
+            project_restore_visibility_mask(&destination_project, 0x1234);
+            ASSERT_TRUE(project_validate(encoded, length, &error));
+            ASSERT_TRUE(project_decode(&state, &destination_project, encoded, length, &error));
+            ASSERT_EQ_INT(CODEC_OK, error);
+            ASSERT_EQ_INT(version == 3 ? masks[mask] : 0xFFFF,
+                          project_visibility_mask(&destination_project));
+            ASSERT_EQ_INT(GRAPH_MODE_3D, state.mode);
+            ASSERT_EQ_INT(APP_VIEW_SPLIT, state.view);
+            ASSERT_EQ_INT(0, state.selected_expression);
+            ASSERT_EQ_INT(2, destination_project.count);
+            ASSERT_STR_EQ("a=2", project_line_source(&destination_project, 0));
+            ASSERT_STR_EQ("a=", project_line_display_text(&destination_project, 0));
+            ASSERT_FLOAT_EQ(5, project_evaluate_line(&destination_project, 1).value);
+            ASSERT_FLOAT_EQ(version == 1 ? 0 : 1.5f, state.viewport.center_x);
+            ASSERT_FLOAT_EQ(version == 1 ? 0 : -2.25f, state.viewport.center_y);
+            ASSERT_FLOAT_EQ(version == 1 ? 0.0625f : 0.25f, state.viewport.units_per_pixel);
+            ASSERT_FALSE(destination_project.dirty);
+        }
+    }
+}
+
+static void test_v3_maximum_size_and_capacity_are_exact(void) {
+    AppState state;
+    CodecError error;
+    char text[EDITOR_CAPACITY];
+    size_t length;
+    unsigned index, version;
+    app_state_init(&state);
+    project_dispose(&source_project);
+    memset(text, ' ', sizeof(text) - 1);
+    memcpy(text, "x=0", 3);
+    text[sizeof(text) - 1] = '\0';
+    for (index = 0; index < 16; index++) set_and_commit(&source_project, (uint8_t)index, text);
+    project_restore_visibility_mask(&source_project, 0x8001);
+    memset(encoded, 0xA5, sizeof(encoded));
+    memcpy(damaged, encoded, sizeof(encoded));
+    ASSERT_EQ_INT(8255, PROJECT_MAX_BYTES);
+    ASSERT_EQ_INT(0, project_encode(&state, &source_project, encoded, 8254, &error));
+    ASSERT_EQ_INT(CODEC_ERR_CAPACITY, error);
+    ASSERT_TRUE(memcmp(encoded, damaged, sizeof(encoded)) == 0);
+    length = project_encode(&state, &source_project, encoded, sizeof(encoded), &error);
+    ASSERT_EQ_INT(8255, length);
+    if (length != 8255) return;
+    for (version = 1; version <= 3; version++) {
+        size_t start = version == 1 ? 17 : version == 2 ? 29 : 31;
+        size_t legacy_length = length - (31 - start);
+        memcpy(damaged, encoded, length);
+        memmove(damaged + start, damaged + 31, length - 31);
+        damaged[4] = (uint8_t)version;
+        repair_fixture(damaged, legacy_length);
+        ASSERT_TRUE(project_decode(&state, &destination_project, damaged, legacy_length, &error));
+        ASSERT_EQ_INT(16, destination_project.count);
+        ASSERT_STR_EQ(text, project_line_source(&destination_project, 15));
+        ASSERT_EQ_INT(version == 3 ? 0x8001 : 0xFFFF, project_visibility_mask(&destination_project));
+    }
 }
 
 static void test_invalid_viewport_encode_keeps_output_and_project_intact(void) {
@@ -346,6 +447,7 @@ static void assert_rejected_without_mutation(const uint8_t *input,
     ASSERT_TRUE(project_set_draft(&destination_project, 0, "q="));
     ASSERT_FALSE(project_commit_line(&destination_project, 0).ok);
     ASSERT_TRUE(editor_move(project_editor(&destination_project), -1));
+    project_restore_visibility_mask(&destination_project, 0x8124);
     destination_project.dirty = false;
     state_before = destination_state;
     dependencies = destination_project.dependencies;
@@ -361,6 +463,7 @@ static void assert_rejected_without_mutation(const uint8_t *input,
     ASSERT_TRUE(memcmp(&state_before, &destination_state, sizeof(state_before)) == 0);
     ASSERT_EQ_INT(2, destination_project.count);
     ASSERT_FALSE(destination_project.dirty);
+    ASSERT_EQ_INT(0x8124, project_visibility_mask(&destination_project));
     ASSERT_STR_EQ("q=9", project_line_source(&destination_project, 0));
     ASSERT_STR_EQ("q=", project_line_display_text(&destination_project, 0));
     ASSERT_EQ_INT(EXPRESSION_INVALID,
@@ -380,7 +483,7 @@ static void assert_rejected_without_mutation(const uint8_t *input,
 static void test_v1_truncation_length_crc_and_version_fail_transactionally(void) {
     size_t length = make_legacy_project();
     static const size_t truncated[] = {13, 14, 15, 16, 17, 18, 20, 23, 25, 39};
-    static const uint8_t versions[] = {0, 3, 255};
+    static const uint8_t versions[] = {0, 4, 255};
     size_t index;
     for (index = 0; index < sizeof(truncated) / sizeof(truncated[0]); index++) {
         memcpy(damaged, encoded, length);
@@ -400,7 +503,7 @@ static void test_v1_truncation_length_crc_and_version_fail_transactionally(void)
     }
 }
 
-static void test_v2_viewport_corruption_is_rejected_before_allocation(void) {
+static void test_viewport_corruption_is_rejected_before_allocation(void) {
     static const struct { size_t offset; uint32_t bits; } invalid[] = {
         {17, 0x7FC00000}, {17, 0x7F800000}, {17, 0xFF800000},
         {21, 0x7FC00000}, {21, 0x7F800000}, {21, 0xFF800000},
@@ -410,44 +513,48 @@ static void test_v2_viewport_corruption_is_rejected_before_allocation(void) {
         {25, 0x461C4001}  /* one binary32 step above 10000.0f */
     };
     AppState state;
-    size_t length = make_encoded_project(&state);
+    unsigned version;
     size_t index;
-    for (index = 0; index < sizeof(invalid) / sizeof(invalid[0]); index++) {
-        CodecError error;
-        memcpy(damaged, encoded, length);
-        damaged[4] = 2;
-        write_test_u32(damaged + invalid[index].offset, invalid[index].bits);
-        repair_fixture(damaged, length);
-        assert_rejected_without_mutation(damaged, length, CODEC_ERR_CONTENT);
-        project_dispose(&destination_project);
-        project_init_with_memory(&destination_project, counting_memory());
-        ASSERT_FALSE(project_decode(&state, &destination_project, damaged, length, &error));
-        ASSERT_EQ_INT(CODEC_ERR_CONTENT, error);
-        ASSERT_EQ_INT(0, memory_calls);
-        ASSERT_EQ_INT(0, memory_live);
-        project_dispose(&destination_project);
-        project_init(&destination_project);
+    for (version = 2; version <= 3; version++) {
+        size_t length = make_version_fixture(encoded, version);
+        for (index = 0; index < sizeof(invalid) / sizeof(invalid[0]); index++) {
+            CodecError error;
+            memcpy(damaged, encoded, length);
+            write_test_u32(damaged + invalid[index].offset, invalid[index].bits);
+            repair_fixture(damaged, length);
+            assert_rejected_without_mutation(damaged, length, CODEC_ERR_CONTENT);
+            project_dispose(&destination_project);
+            project_init_with_memory(&destination_project, counting_memory());
+            ASSERT_FALSE(project_decode(&state, &destination_project, damaged, length, &error));
+            ASSERT_EQ_INT(CODEC_ERR_CONTENT, error);
+            ASSERT_EQ_INT(0, memory_calls);
+            ASSERT_EQ_INT(0, memory_live);
+            project_dispose(&destination_project);
+            project_init(&destination_project);
+        }
     }
 }
 
-static void test_v2_accepts_finite_centers_and_inclusive_scale_clamps(void) {
+static void test_viewport_accepts_finite_centers_and_inclusive_scale_clamps(void) {
     static const uint32_t scales[] = {0x38D1B717, 0x461C4000};
     AppState state;
     CodecError error;
-    size_t length = make_encoded_project(&state);
+    unsigned version;
     unsigned index;
-    for (index = 0; index < 2; index++) {
-        memcpy(damaged, encoded, length);
-        damaged[4] = 2;
-        write_test_u32(damaged + 17, 0x7F7FFFFF);
-        write_test_u32(damaged + 21, 0xFF7FFFFF);
-        write_test_u32(damaged + 25, scales[index]);
-        repair_fixture(damaged, length);
-        ASSERT_TRUE(project_decode(&state, &destination_project, damaged, length, &error));
-        ASSERT_TRUE(isfinite(state.viewport.center_x));
-        ASSERT_TRUE(state.viewport.center_x > 1e30f);
-        ASSERT_TRUE(state.viewport.center_y < -1e30f);
-        ASSERT_TRUE(state.viewport.units_per_pixel == (index == 0 ? 0.0001f : 10000.0f));
+    for (version = 2; version <= 3; version++) {
+        size_t length = make_version_fixture(encoded, version);
+        for (index = 0; index < 2; index++) {
+            memcpy(damaged, encoded, length);
+            write_test_u32(damaged + 17, 0x7F7FFFFF);
+            write_test_u32(damaged + 21, 0xFF7FFFFF);
+            write_test_u32(damaged + 25, scales[index]);
+            repair_fixture(damaged, length);
+            ASSERT_TRUE(project_decode(&state, &destination_project, damaged, length, &error));
+            ASSERT_TRUE(isfinite(state.viewport.center_x));
+            ASSERT_TRUE(state.viewport.center_x > 1e30f);
+            ASSERT_TRUE(state.viewport.center_y < -1e30f);
+            ASSERT_TRUE(state.viewport.units_per_pixel == (index == 0 ? 0.0001f : 10000.0f));
+        }
     }
 }
 
@@ -493,7 +600,7 @@ static void test_project_codec_rejects_duplicate_saved_definitions(void) {
                             &error);
     ASSERT_TRUE(length > 0);
     /* Corrupt the second committed definition, then repair the payload CRC. */
-    encoded[41] = 'a'; /* v2 line 1 committed text: 29 + 10 + 2. */
+    encoded[43] = 'a'; /* v3 line 1 committed text: 31 + 10 + 2. */
     {
         uint32_t crc = project_crc32(&encoded[13], length - 13);
         encoded[9] = (uint8_t)crc;
@@ -620,70 +727,78 @@ static void test_decoder_fuzz_keeps_destinations_transactional(void) {
 }
 
 static void test_decode_allocation_failures_preserve_destination_and_release_staging(void) {
-    AppState source_state;
     AppState destination_state;
     AppState before;
     Project destination;
     CodecError error;
-    size_t length = make_encoded_project(&source_state);
-    unsigned fail;
-
-    ASSERT_EQ_INT(2, encoded[4]);
-
-    for (fail = 1; fail <= 2; fail++) {
-        size_t bytes;
-        DependencyGraph dependencies;
-        EditorBuffer editor;
-        project_init_with_memory(&destination, counting_memory());
-        set_and_commit(&destination, 0, "q=9");
-        set_and_commit(&destination, 1, "r=q+1");
-        ASSERT_TRUE(project_set_draft(&destination, 0, "q="));
-        ASSERT_FALSE(project_commit_line(&destination, 0).ok);
-        ASSERT_TRUE(editor_move(project_editor(&destination), -1));
-        destination.dirty = false;
-        app_state_init(&destination_state);
-        destination_state.selected_expression = 7;
-        destination_state.viewport = (Viewport2D){7, -8, 2};
-        before = destination_state;
-        dependencies = destination.dependencies;
-        editor = *project_editor(&destination);
-        bytes = memory_bytes;
-        memory_fail_on = memory_calls + fail;
-        ASSERT_FALSE(project_decode(&destination_state, &destination,
-                                    encoded, length, &error));
-        ASSERT_EQ_INT(CODEC_ERR_MEMORY, error);
-        assert_state_equal(&before, &destination_state);
-        ASSERT_TRUE(memcmp(&before, &destination_state, sizeof(before)) == 0);
-        ASSERT_STR_EQ("q=9", project_line_source(&destination, 0));
-        ASSERT_STR_EQ("q=", project_line_display_text(&destination, 0));
-        ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&destination, 0));
-        ASSERT_EQ_INT(0, project_editing_index(&destination));
-        ASSERT_TRUE(memcmp(&editor, project_editor(&destination), sizeof(editor)) == 0);
-        ASSERT_TRUE(memcmp(&dependencies, &destination.dependencies, sizeof(dependencies)) == 0);
-        ASSERT_EQ_INT(2, destination.count);
-        ASSERT_FALSE(destination.dirty);
-        ASSERT_FLOAT_EQ(9.0f, project_evaluate_line(&destination, 0).value);
-        ASSERT_FLOAT_EQ(10.0f, project_evaluate_line(&destination, 1).value);
-        ASSERT_EQ_INT(2, memory_live);
-        ASSERT_EQ_INT(bytes, memory_bytes);
-        project_dispose(&destination);
-        ASSERT_EQ_INT(0, memory_live);
-        ASSERT_EQ_INT(0, memory_bytes);
+    unsigned fail, version;
+    for (version = 1; version <= 3; version++) {
+        size_t length = make_version_fixture(encoded, version);
+        for (fail = 1; fail <= 2; fail++) {
+            size_t bytes;
+            DependencyGraph dependencies;
+            EditorBuffer editor;
+            project_init_with_memory(&destination, counting_memory());
+            set_and_commit(&destination, 0, "q=9");
+            set_and_commit(&destination, 1, "r=q+1");
+            ASSERT_TRUE(project_set_draft(&destination, 0, "q="));
+            ASSERT_FALSE(project_commit_line(&destination, 0).ok);
+            ASSERT_TRUE(editor_move(project_editor(&destination), -1));
+            project_restore_visibility_mask(&destination, 0x8124);
+            destination.dirty = false;
+            app_state_init(&destination_state);
+            destination_state.selected_expression = 7;
+            destination_state.viewport = (Viewport2D){7, -8, 2};
+            before = destination_state;
+            dependencies = destination.dependencies;
+            editor = *project_editor(&destination);
+            bytes = memory_bytes;
+            memory_fail_on = memory_calls + fail;
+            ASSERT_FALSE(project_decode(&destination_state, &destination,
+                                        encoded, length, &error));
+            ASSERT_EQ_INT(CODEC_ERR_MEMORY, error);
+            assert_state_equal(&before, &destination_state);
+            ASSERT_TRUE(memcmp(&before, &destination_state, sizeof(before)) == 0);
+            ASSERT_STR_EQ("q=9", project_line_source(&destination, 0));
+            ASSERT_STR_EQ("q=", project_line_display_text(&destination, 0));
+            ASSERT_EQ_INT(EXPRESSION_INVALID, project_line_status(&destination, 0));
+            ASSERT_EQ_INT(0, project_editing_index(&destination));
+            ASSERT_TRUE(memcmp(&editor, project_editor(&destination), sizeof(editor)) == 0);
+            ASSERT_TRUE(memcmp(&dependencies, &destination.dependencies, sizeof(dependencies)) == 0);
+            ASSERT_EQ_INT(2, destination.count);
+            ASSERT_FALSE(destination.dirty);
+            ASSERT_EQ_INT(0x8124, project_visibility_mask(&destination));
+            ASSERT_FLOAT_EQ(9.0f, project_evaluate_line(&destination, 0).value);
+            ASSERT_FLOAT_EQ(10.0f, project_evaluate_line(&destination, 1).value);
+            ASSERT_EQ_INT(2, memory_live);
+            ASSERT_EQ_INT(bytes, memory_bytes);
+            project_dispose(&destination);
+            ASSERT_EQ_INT(0, memory_live);
+            ASSERT_EQ_INT(0, memory_bytes);
+        }
     }
 }
 
-static void test_both_versions_truncate_and_fuzz_valid_documents(void) {
-    AppState source_state;
+static void test_all_versions_truncate_and_fuzz_valid_documents(void) {
     uint8_t seed[PROJECT_MAX_BYTES];
     uint32_t random = 0xBAADF00D;
     unsigned version;
-    for (version = 1; version <= 2; version++) {
-        size_t length = version == 1 ? make_legacy_project() : make_encoded_project(&source_state);
+    for (version = 1; version <= 3; version++) {
+        size_t length = make_version_fixture(encoded, version);
         size_t index;
         memcpy(seed, encoded, length);
         for (index = 0; index < length; index++) {
             assert_rejected_without_mutation(seed, index, CODEC_ERR_LENGTH);
         }
+        memcpy(damaged, seed, length);
+        damaged[9] ^= 1;
+        assert_rejected_without_mutation(damaged, length, CODEC_ERR_CRC);
+        memcpy(damaged, seed, length);
+        damaged[4] = 4;
+        assert_rejected_without_mutation(damaged, length, CODEC_ERR_VERSION);
+        memcpy(damaged, seed, length);
+        repair_fixture(damaged, length - 1);
+        assert_rejected_without_mutation(damaged, length - 1, CODEC_ERR_LENGTH);
         for (index = 0; index < 200; index++) {
             AppState state;
             AppState before;
@@ -702,6 +817,7 @@ static void test_both_versions_truncate_and_fuzz_valid_documents(void) {
             project_dispose(&destination_project);
             set_and_commit(&destination_project, 0, "q=9");
             ASSERT_TRUE(project_set_draft(&destination_project, 0, "q="));
+            project_restore_visibility_mask(&destination_project, 0x8124);
             dependencies = destination_project.dependencies;
             editor = *project_editor(&destination_project);
             if (!project_decode(&state, &destination_project, damaged, length, &error)) {
@@ -709,6 +825,7 @@ static void test_both_versions_truncate_and_fuzz_valid_documents(void) {
                 ASSERT_STR_EQ("q=9", project_line_source(&destination_project, 0));
                 ASSERT_STR_EQ("q=", project_line_display_text(&destination_project, 0));
                 ASSERT_TRUE(destination_project.dirty);
+                ASSERT_EQ_INT(0x8124, project_visibility_mask(&destination_project));
                 ASSERT_EQ_INT(1, destination_project.count);
                 ASSERT_TRUE(memcmp(&editor, project_editor(&destination_project), sizeof(editor)) == 0);
                 ASSERT_TRUE(memcmp(&dependencies, &destination_project.dependencies, sizeof(dependencies)) == 0);
@@ -750,12 +867,14 @@ void run_project_codec_tests(void) {
     project_init(&destination_project);
     test_inverse_trig_sources_round_trip_through_generic_codec();
     test_v1_fixture_migrates_with_default_viewport();
-    test_v2_exact_bytes_and_clean_viewport_save();
-    test_v2_omits_a_draft_when_editing_an_unselected_line();
+    test_v3_exact_bytes_and_clean_viewport_save();
+    test_v3_omits_a_draft_when_editing_an_unselected_line();
+    test_fixed_versions_restore_viewport_content_and_slot_visibility();
+    test_v3_maximum_size_and_capacity_are_exact();
     test_invalid_viewport_encode_keeps_output_and_project_intact();
     test_v1_truncation_length_crc_and_version_fail_transactionally();
-    test_v2_viewport_corruption_is_rejected_before_allocation();
-    test_v2_accepts_finite_centers_and_inclusive_scale_clamps();
+    test_viewport_corruption_is_rejected_before_allocation();
+    test_viewport_accepts_finite_centers_and_inclusive_scale_clamps();
     test_decode_allocation_failures_preserve_destination_and_release_staging();
     test_project_codec_round_trips_committed_and_draft_sources();
     test_project_codec_round_trips_an_empty_project();
@@ -765,7 +884,7 @@ void run_project_codec_tests(void) {
     test_project_codec_rejects_duplicate_saved_definitions();
     test_project_codec_restores_only_the_active_duplicate_draft();
     test_decoder_fuzz_keeps_destinations_transactional();
-    test_both_versions_truncate_and_fuzz_valid_documents();
+    test_all_versions_truncate_and_fuzz_valid_documents();
     project_dispose(&source_project);
     project_dispose(&destination_project);
 }
